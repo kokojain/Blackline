@@ -2,3 +2,8 @@
 .swiftpm/
 *.xcodeproj
 .DS_Store
+
+# Never commit real documents under test.
+samples/*
+!samples/README.md
+!samples/redact.example.txt

@@ -1,0 +1,15 @@
+# Blackline rules — lines starting with # are comments
+# Copy to ~/Documents/redact.txt and edit.
+
+# Exact matches (quoted). Case-insensitive; prefix with ! to force case.
+# For a tax return this is the important section: person names and street
+# addresses have no detector yet, so list them here explicitly.
+"Jane Q Taxpayer"
+"John Q Taxpayer"
+"123 Harbor View Drive"
+"Knob LLC"
+
+# Descriptions (unquoted) — detected automatically.
+social security numbers
+credit card numbers
+account numbers

@@ -41,6 +41,54 @@ rasterizing and re-verifying on any hit. Output is only written once verificatio
 A silent no-op is treated as a privacy failure: the completion notification always states
 the count and which rules matched.
 
+## Repo layout and commands
+
+```
+blackline-spec.md          the product spec; sections are cited throughout the code
+Package.swift              BlacklineKit, swift-tools-version 6.0, macOS 14+
+Sources/BlacklineKit/      the redaction engine (library only — no UI, no PDFKit)
+Sources/BlacklinePreview/  blackline-preview, a read-only CLI (this one does use PDFKit)
+Tests/BlacklineKitTests/   swift-testing (`import Testing`)
+samples/                   scratch space for test documents; gitignored
+```
+
+```sh
+swift build                          # build the library
+swift test                           # run the full suite
+swift test --filter SSNMatcherTests  # one suite
+
+swift run blackline-preview <file.pdf> [--rules <redact.txt>] [--mask]
+```
+
+`blackline-preview` reports what *would* be redacted. It writes nothing and cannot produce
+a redacted PDF — the redaction stage does not exist. Its most important output is what it
+says it did **not** check: categories with no detector, and pages with no extractable text.
+A scanned page currently yields zero matches and a loud warning, which is the shape of the
+false negative spec §7 warns about.
+
+BlacklineKit imports **Foundation only**, on purpose. Keeping PDFKit, AppKit, and SwiftUI
+out is what makes the matching logic testable headlessly, which matters because spec §7
+names false negatives as the dangerous failure. PDF and UI work belongs in targets that
+depend on this one, never inside it.
+
+### Implementation status
+
+Built: rules parsing (§4) and the matching layer (§5.3) — `RulesParser`, `SourceText`
+normalization, and `ExactTextMatcher`, `SSNMatcher`, `CreditCardMatcher`,
+`AccountNumberMatcher` behind the `Matcher` protocol.
+
+Also built: `blackline-preview`, a read-only CLI that extracts text with PDFKit and reports
+matches per page.
+
+Not built yet: **everything that changes a PDF**. No OCR (§5.2), redaction or rasterization
+(§5.4), metadata scrubbing (§5.5), or verification pass (§5.6); and no menu bar app, Finder
+service, or App Intent. Nothing in this repo can redact a file today.
+
+Category detectors for email addresses, phone numbers, street addresses, person names, and
+dates of birth are also still missing — they need `NSDataDetector` and NaturalLanguage.
+`MatcherFactory` reports these through `unsupportedCategories` rather than passing them
+over silently.
+
 ## Architecture (spec §6)
 
 | Layer | Technology |
