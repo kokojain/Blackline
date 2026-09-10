@@ -47,6 +47,7 @@ the count and which rules matched.
 blackline-spec.md          the product spec; sections are cited throughout the code
 Package.swift              BlacklineKit, swift-tools-version 6.0, macOS 14+
 Sources/BlacklineKit/      the redaction engine (library only — no UI, no PDFKit)
+Sources/BlacklineIntelligence/  on-device model tier (FoundationModels, macOS 26+)
 Sources/BlacklinePreview/  blackline-preview, a read-only CLI (this one does use PDFKit)
 Tests/BlacklineKitTests/   swift-testing (`import Testing`)
 samples/                   scratch space for test documents; gitignored
@@ -57,7 +58,7 @@ swift build                          # build the library
 swift test                           # run the full suite
 swift test --filter SSNMatcherTests  # one suite
 
-swift run blackline-preview <file.pdf> [--rules <redact.txt>] [--mask]
+swift run blackline-preview <file.pdf> [--rules <redact.txt>] [--mask] [--llm]
 ```
 
 `blackline-preview` reports what *would* be redacted. It writes nothing and cannot produce
@@ -71,6 +72,40 @@ out is what makes the matching logic testable headlessly, which matters because 
 names false negatives as the dangerous failure. PDF and UI work belongs in targets that
 depend on this one, never inside it.
 
+### Detection tiers
+
+Detection is layered, and the layering is a safety property, not just organization:
+
+1. **Deterministic floor** — regex and (later) `NSDataDetector` in BlacklineKit. Structured
+   identifiers with a knowable coverage boundary: you can state exactly which SSN formats
+   are caught. Fast, reproducible, immune to anything written in the document.
+2. **NER** — `NLTagScheme.nameType` for person/place/organization. Not built yet; works
+   back to macOS 10.14 and returns spans directly.
+3. **On-device model** — `BlacklineIntelligence`, behind `--llm`. Catches what a pattern
+   cannot: values that are sensitive because of the surrounding context rather than their
+   shape.
+
+Three rules govern tier 3, and they are what make a non-deterministic component safe to put
+inside a privacy tool:
+
+- **It only adds.** A model proposal can introduce a redaction; nothing it returns can
+  retract one found by tier 1. The coverage you can *prove* never shrinks.
+- **It proposes text, never positions.** `ProposalLocator` resolves every proposal through
+  `ExactTextMatcher`, so a span that does not literally occur on the page is discarded
+  rather than blacked out at a guessed offset. `blackline-preview` prints discarded
+  proposals — that count is the model's error rate, made visible.
+- **The document cannot give instructions.** Page text is untrusted input; a PDF can carry
+  a sentence aimed at the model, including invisible white-on-white text. The structural
+  defense is the rule above: injected text can only cause spans that genuinely appear on
+  the page to be redacted, never fewer. Do not weaken this to prompt wording alone.
+
+Sampling is `.greedy` so two runs over one document agree — a privacy tool that reports
+different findings each time cannot be reasoned about.
+
+`ProposalLocator` and `TextChunker` deliberately live outside the `@available(macOS 26)`
+gate and have no FoundationModels dependency, so the containment logic is testable
+everywhere and reusable by any future proposer.
+
 ### Implementation status
 
 Built: rules parsing (§4) and the matching layer (§5.3) — `RulesParser`, `SourceText`
@@ -78,7 +113,7 @@ normalization, and `ExactTextMatcher`, `SSNMatcher`, `CreditCardMatcher`,
 `AccountNumberMatcher` behind the `Matcher` protocol.
 
 Also built: `blackline-preview`, a read-only CLI that extracts text with PDFKit and reports
-matches per page.
+matches per page; and the tier-3 model proposer behind `--llm`.
 
 Not built yet: **everything that changes a PDF**. No OCR (§5.2), redaction or rasterization
 (§5.4), metadata scrubbing (§5.5), or verification pass (§5.6); and no menu bar app, Finder

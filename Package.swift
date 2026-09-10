@@ -10,7 +10,15 @@ let package = Package(
     ],
     targets: [
         .target(name: "BlacklineKit"),
-        .executableTarget(name: "BlacklinePreview", dependencies: ["BlacklineKit"]),
+        .target(name: "BlacklineIntelligence", dependencies: ["BlacklineKit"]),
+        .executableTarget(
+            name: "BlacklinePreview",
+            dependencies: ["BlacklineKit", "BlacklineIntelligence"]
+        ),
         .testTarget(name: "BlacklineKitTests", dependencies: ["BlacklineKit"]),
+        .testTarget(
+            name: "BlacklineIntelligenceTests",
+            dependencies: ["BlacklineIntelligence", "BlacklineKit"]
+        ),
     ]
 )
