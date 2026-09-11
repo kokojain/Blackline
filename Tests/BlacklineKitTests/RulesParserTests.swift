@@ -272,3 +272,55 @@ struct RulesParserTests {
         #expect(throws: (any Error).self) { try parser.parse(contentsOf: url) }
     }
 }
+
+@Suite("RulesParser file handling")
+struct RulesParserFileTests {
+    private let parser = RulesParser()
+
+    private func writeTemp(_ contents: String, encoding: String.Encoding = .utf8) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("redact-\(UUID().uuidString).txt")
+        try contents.write(to: url, atomically: true, encoding: encoding)
+        return url
+    }
+
+    // TextEdit saves Rich Text by default, so a hand-made rules file is often RTF. Every
+    // rule line then ends in a backslash and none of them parse — the failure has to name
+    // the real cause rather than reporting an empty rule set.
+    @Test("A Rich Text file is rejected with an explanation, not silently empty")
+    func rejectsRichText() throws {
+        let rtf = """
+        {\\rtf1\\ansi\\ansicpg1252\\cocoartf2822
+        \\f0\\fs24 \\cf0 "Knob LLC"\\
+        social security numbers}
+        """
+        let url = try writeTemp(rtf)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(throws: RulesParser.FileError.self) { try parser.parse(contentsOf: url) }
+        do {
+            _ = try parser.parse(contentsOf: url)
+        } catch let error as RulesParser.FileError {
+            let message = error.errorDescription ?? ""
+            #expect(message.contains("Rich Text"))
+            #expect(message.contains("Make Plain Text"))
+            #expect(message.contains("textutil"))
+        }
+    }
+
+    @Test("A plain-text file that merely mentions rtf is not rejected")
+    func doesNotOvermatchRTF() throws {
+        let url = try writeTemp("\"{\\rtf1 is not the start of this file}\"\nemail addresses")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(try parser.parse(contentsOf: url).ruleSet.ruleCount == 2)
+    }
+
+    @Test("A non-UTF-8 rules file is read rather than refused")
+    func readsLegacyEncoding() throws {
+        let url = try writeTemp("\"Café Münster\"\nemail addresses", encoding: .isoLatin1)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let result = try parser.parse(contentsOf: url)
+        #expect(result.ruleSet.ruleCount == 2)
+        #expect(result.ruleSet.exactRules.first?.literal == "Café Münster")
+    }
+}

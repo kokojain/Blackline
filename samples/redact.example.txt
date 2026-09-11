@@ -1,5 +1,8 @@
 # Blackline rules — lines starting with # are comments
 # Copy to ~/Documents/redact.txt and edit.
+#
+# Save as PLAIN TEXT. TextEdit saves Rich Text by default, which Blackline
+# cannot read — use Format > Make Plain Text before saving.
 
 # Exact matches (quoted). Case-insensitive; prefix with ! to force case.
 # For a tax return this is the important section: person names and street

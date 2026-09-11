@@ -87,6 +87,9 @@ guard FileManager.default.fileExists(atPath: options.rulesPath) else {
 let parsed: RulesParser.Result
 do {
     parsed = try RulesParser().parse(contentsOf: URL(fileURLWithPath: options.rulesPath))
+} catch let error as RulesParser.FileError {
+    // Already names the file and how to fix it; don't wrap it in another path.
+    fail(error.errorDescription ?? "could not read \(options.rulesPath)")
 } catch {
     fail("could not read \(options.rulesPath): \(error.localizedDescription)")
 }

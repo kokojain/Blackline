@@ -24,10 +24,51 @@ public struct RulesParser: Sendable {
 
     public init() {}
 
-    /// Reads and parses a rules file. Throws only if the file cannot be read; malformed
-    /// content is reported through `Result.diagnostics`.
+    /// Why a rules file could not be read at all, as distinct from rules inside it being
+    /// malformed — those are reported as ``Diagnostic``s and never throw.
+    public enum FileError: Error, LocalizedError {
+        /// The file is Rich Text, not plain text. TextEdit saves RTF by default, so this is
+        /// the most likely reason a hand-made rules file appears empty: every rule ends up
+        /// wrapped in markup and none of them parse.
+        case richText(URL)
+        /// The bytes are not text in any encoding Foundation could identify.
+        case unreadableEncoding(URL)
+
+        public var errorDescription: String? {
+            switch self {
+            case .richText(let url):
+                """
+                \(url.path) is a Rich Text file, not plain text, so none of its rules could be \
+                read. TextEdit saves Rich Text by default — use Format ▸ Make Plain Text and \
+                save again, or convert it with:
+                  textutil -format rtf -convert txt "\(url.path)" -output "\(url.path)"
+                """
+            case .unreadableEncoding(let url):
+                "\(url.path) could not be read as text in any known encoding."
+            }
+        }
+    }
+
+    /// Reads and parses a rules file. Throws only if the file cannot be read *as text*;
+    /// malformed rules inside a readable file are reported through `Result.diagnostics`.
     public func parse(contentsOf url: URL) throws -> Result {
-        parse(try String(contentsOf: url, encoding: .utf8))
+        let contents: String
+        if let utf8 = try? String(contentsOf: url, encoding: .utf8) {
+            contents = utf8
+        } else {
+            // A rules file edited on another platform may not be UTF-8; let Foundation
+            // identify the encoding rather than failing on a file that is perfectly good.
+            var encoding = String.Encoding.utf8
+            guard let detected = try? String(contentsOf: url, usedEncoding: &encoding) else {
+                throw FileError.unreadableEncoding(url)
+            }
+            contents = detected
+        }
+
+        guard !contents.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{\\rtf") else {
+            throw FileError.richText(url)
+        }
+        return parse(contents)
     }
 
     public func parse(_ contents: String) -> Result {
