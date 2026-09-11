@@ -48,7 +48,9 @@ blackline-spec.md          the product spec; sections are cited throughout the c
 Package.swift              BlacklineKit, swift-tools-version 6.0, macOS 14+
 Sources/BlacklineKit/      the redaction engine (library only — no UI, no PDFKit)
 Sources/BlacklineIntelligence/  on-device model tier (FoundationModels, macOS 26+)
+Sources/BlacklineRedactor/ PDF rendering, redaction, and verification (PDFKit)
 Sources/BlacklinePreview/  blackline-preview, a read-only CLI (this one does use PDFKit)
+Sources/BlacklineRedactCLI/ blackline-redact, writes the redacted copy
 Tests/BlacklineKitTests/   swift-testing (`import Testing`)
 samples/                   scratch space for test documents; gitignored
 ```
@@ -59,6 +61,7 @@ swift test                           # run the full suite
 swift test --filter SSNMatcherTests  # one suite
 
 swift run blackline-preview <file.pdf> [--rules <redact.txt>] [--mask] [--llm]
+swift run blackline-redact  <file.pdf> [--rules <redact.txt>] [--llm] [--scale N]
 ```
 
 `blackline-preview` reports what *would* be redacted. It writes nothing and cannot produce
@@ -71,6 +74,38 @@ BlacklineKit imports **Foundation only**, on purpose. Keeping PDFKit, AppKit, an
 out is what makes the matching logic testable headlessly, which matters because spec §7
 names false negatives as the dangerous failure. PDF and UI work belongs in targets that
 depend on this one, never inside it.
+
+### How redaction works
+
+Pages carrying a match are **rasterized**: rendered to an image with black boxes burned
+in, then re-embedded. Spec §5.4 describes this as the fallback behind content-stream
+surgery; here it is the only path, because its guarantee needs no qualification — there is
+no text object left to recover, whatever the original encoding did. The cost is real and is
+stated in the output: redacted pages stop being selectable and searchable. Pages with no
+matches are copied through untouched and keep their text.
+
+Content-stream surgery is deferred rather than half-built. A surgical path that works on
+most encodings is exactly the false negative §7 warns about.
+
+**Box geometry comes from `PDFSelection`, never `characterBounds(at:)`.** The latter
+returns degenerate rectangles on real documents — zero-height boxes at the wrong baseline —
+which puts black boxes beside the text instead of on it. `characterBounds` is used only to
+*narrow* a box vertically, and only when every glyph resolves onto a single row; otherwise
+the wider line box stands. Too tall covers a neighbouring line; too short leaves the value
+readable.
+
+**Text-extraction verification is necessary but not sufficient.** This is the trap worth
+remembering: rasterizing deletes the text layer whether or not the boxes landed correctly,
+so §5.6's re-scan passes trivially on a page with a visible, unredacted SSN. It was caught
+happening. The real guard is in `redactionBoxes`, which requires the text PDFKit resolves at
+a span's indices to equal the text the matcher found, and aborts the whole document if not.
+Do not remove that check on the grounds that verification already covers it.
+
+Output is `<name> redacted.pdf` beside the original, with a counter on collision — the
+original is never modified and nothing is ever overwritten (§2, §3). The candidate is
+written to a temporary file, reopened, and re-scanned; only then does it move to the real
+name. A document where no rule matches produces **no file at all**, because a copy identical
+to the original is a privacy failure rather than a success (§3).
 
 ### Detection tiers
 
@@ -115,9 +150,12 @@ normalization, and `ExactTextMatcher`, `SSNMatcher`, `CreditCardMatcher`,
 Also built: `blackline-preview`, a read-only CLI that extracts text with PDFKit and reports
 matches per page; and the tier-3 model proposer behind `--llm`.
 
-Not built yet: **everything that changes a PDF**. No OCR (§5.2), redaction or rasterization
-(§5.4), metadata scrubbing (§5.5), or verification pass (§5.6); and no menu bar app, Finder
-service, or App Intent. Nothing in this repo can redact a file today.
+Also built: redaction with rasterization (§5.4), metadata scrubbing (§5.5), and the
+verification pass (§5.6), driven by `blackline-redact`.
+
+Not built yet: OCR (§5.2), so scanned pages are copied through unexamined; content-stream
+surgery, so redacted pages lose selectable text; encrypted-PDF password handling; and the
+whole app layer — no menu bar app, Finder service, Share extension, or App Intent.
 
 Category detectors for email addresses, phone numbers, street addresses, person names, and
 dates of birth are also still missing — they need `NSDataDetector` and NaturalLanguage.
