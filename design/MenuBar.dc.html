@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --paper: #ffffff;
+      --line: oklch(0.905 0.004 250);
+      --line-strong: oklch(0.85 0.005 250);
+      --text: oklch(0.28 0.012 260);
+      --muted: oklch(0.55 0.012 260);
+      --faint: oklch(0.69 0.010 260);
+      --accent: oklch(0.56 0.17 258);
+      --accent-soft: oklch(0.94 0.035 258);
+      --warn: oklch(0.63 0.15 62);
+      --ok: oklch(0.56 0.12 155);
+      --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    body { margin: 0; background: transparent; font-family: var(--ui); color: var(--text); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: oklch(0.46 0.17 258); }
+    .row { display: flex; align-items: center; }
+    .item { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 10px; border-radius: 6px; font-size: 13px; }
+  </style>
+</helmet>
+
+<div style="width: 420px; height: 574px; display: flex; flex-direction: column; align-items: stretch; font-size: 13px;">
+
+  <!-- macOS menu bar, with the app's icon mid-job -->
+  <div class="row" style="height: 26px; padding: 0 12px; gap: 15px; justify-content: flex-end; background: oklch(0.99 0.002 250 / 0.82); backdrop-filter: blur(20px); border-radius: 7px 7px 0 0; border: 0.5px solid var(--line); border-bottom: 0; color: oklch(0.32 0.01 260);">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 12.5a7 7 0 0114 0"/><path d="M8 15.5a4 4 0 018 0"/><circle cx="12" cy="18.5" r="1" fill="currentColor"/></svg>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="15" height="7" rx="2"/><path d="M20 11.5v2"/></svg>
+
+    <!-- Blackline, working -->
+    <div class="row" style="gap: 5px; padding: 2px 6px; margin: 0 -2px; border-radius: 5px; background: oklch(0.56 0.17 258 / 0.14);">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <path d="M6 4h12v16H6z"/>
+        <path d="M9 9h6" stroke-width="3.4"/>
+        <path d="M9 13h4" stroke-width="1.6"/>
+        <path d="M9 16.5h6" stroke-width="3.4"/>
+      </svg>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-width="3">
+        <circle cx="12" cy="12" r="9" stroke="oklch(0.32 0.01 260 / 0.22)"/>
+        <path d="M12 3a9 9 0 016.36 15.36" stroke="currentColor" stroke-linecap="round"/>
+      </svg>
+    </div>
+
+    <span style="font-size: 12.5px; letter-spacing: -0.01em;">Tue 16 Sep&nbsp; 09:41</span>
+  </div>
+
+  <!-- Popover -->
+  <div style="flex-grow: 1; background: oklch(0.985 0.002 250 / 0.94); backdrop-filter: blur(30px); border: 0.5px solid var(--line-strong); border-radius: 0 0 11px 11px; box-shadow: 0 16px 44px rgba(0,0,0,.22); padding: 8px; display: flex; flex-direction: column; gap: 4px; min-height: 0;">
+
+    <!-- Running job -->
+    <div style="padding: 11px 11px 12px; border-radius: 9px; background: var(--paper); border: 0.5px solid var(--line); display: flex; flex-direction: column; gap: 9px;">
+      <div class="row" style="gap: 8px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12.5h6" stroke-width="3"/></svg>
+        <div style="flex-grow: 1; min-width: 0; line-height: 1.3;">
+          <div style="font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">2025US Knob LLC Form 1120S.pdf</div>
+          <div style="font-size: 11px; color: var(--muted);">Page 4 of 12 &middot; pass 2</div>
+        </div>
+        <button style="height: 22px; padding: 0 9px; border-radius: 6px; border: 0.5px solid var(--line-strong); background: var(--paper); font-size: 11.5px; color: var(--text); font-family: var(--ui);">Cancel</button>
+      </div>
+
+      <div style="height: 5px; border-radius: 999px; background: oklch(0.90 0.004 250); overflow: hidden;">
+        <div style="width: 31%; height: 100%; border-radius: 999px; background: var(--accent);"></div>
+      </div>
+
+      <!-- the model step, named plainly so a long pause is legible -->
+      <div class="row" style="gap: 7px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M12 3l1.9 4.6 4.6 1.9-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M18 16.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg>
+        <span style="font-size: 11.5px; color: var(--text);">Asking the on-device model what is still visible&hellip;</span>
+      </div>
+
+      <div class="row" style="gap: 6px; font-size: 10.5px; color: var(--faint);">
+        <span>about 2 min left</span>
+        <span>&middot;</span>
+        <span>nothing leaves this Mac</span>
+      </div>
+    </div>
+
+    <!-- Queue -->
+    <div style="padding: 4px 11px 2px;">
+      <div style="font-size: 10.5px; font-weight: 600; color: var(--faint); letter-spacing: 0.04em; text-transform: uppercase;">Waiting</div>
+    </div>
+    <div class="item" style="color: var(--muted);">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
+      <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">K-1 Shareholder 2025.pdf</span>
+    </div>
+    <div class="item" style="color: var(--muted);">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>
+      <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Bank statement Aug.pdf</span>
+    </div>
+
+    <div style="height: 0.5px; background: var(--line); margin: 5px 9px;"></div>
+
+    <!-- Recent -->
+    <div style="padding: 2px 11px 2px;">
+      <div style="font-size: 10.5px; font-weight: 600; color: var(--faint); letter-spacing: 0.04em; text-transform: uppercase;">Recent</div>
+    </div>
+
+    <div class="item">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M4 12.5l5 5L20 6.5"/></svg>
+      <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">statement redacted.pdf</span>
+      <span style="font-size: 11px; color: var(--faint); flex: none;">14</span>
+    </div>
+
+    <!-- a past job that needs attention keeps saying so -->
+    <div class="item" style="background: oklch(0.955 0.035 70);">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="oklch(0.44 0.13 62)" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M12 4.5l8.5 15h-17z"/><path d="M12 10v3.5"/><path d="M12 16.8v.1"/></svg>
+      <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">medical records redacted.pdf</span>
+      <span style="font-size: 10.5px; color: oklch(0.44 0.13 62); font-weight: 600; flex: none;">2 pages not checked</span>
+    </div>
+
+    <div class="item">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M4 12.5l5 5L20 6.5"/></svg>
+      <span style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">lease agreement redacted.pdf</span>
+      <span style="font-size: 11px; color: var(--faint); flex: none;">7</span>
+    </div>
+
+    <div style="flex-grow: 1;"></div>
+    <div style="height: 0.5px; background: var(--line); margin: 5px 9px;"></div>
+
+    <div class="item" style="background: var(--accent-soft); color: var(--accent); font-weight: 600;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12.5h6" stroke-width="3"/></svg>
+      <span style="flex-grow: 1;">Redact a PDF&hellip;</span>
+    </div>
+    <div class="item">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M5 4h9l5 5v11H5z"/><path d="M8.5 11h7M8.5 14.5h7M8.5 18h4"/></svg>
+      <span style="flex-grow: 1;">Edit redaction rules&hellip;</span>
+      <span style="font-size: 11px; color: var(--faint);">7 rules</span>
+    </div>
+    <div class="item">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>
+      <span style="flex-grow: 1;">Settings&hellip;</span>
+    </div>
+    <div class="item" style="color: var(--muted);">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4"/><path d="M9 16l-4-4 4-4"/><path d="M5 12h9"/></svg>
+      <span style="flex-grow: 1;">Quit Blackline</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview":{"width":420,"height":574}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

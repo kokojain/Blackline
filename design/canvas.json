@@ -1,0 +1,39 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Review window", "x": 0, "y": 0, "w": 1100, "h": 720 },
+    { "file": "NotChecked.dc.html", "title": "Not-checked state", "x": 1220, "y": 0, "w": 1100, "h": 720 },
+    { "file": "MenuBar.dc.html", "title": "Menu bar — job running", "x": 0, "y": 900, "w": 420, "h": 574 },
+    { "file": "RulesEditor.dc.html", "title": "Rules editor", "x": 540, "y": 900, "w": 860, "h": 620 }
+  ],
+  "annotations": [
+    {
+      "id": "peek",
+      "x": 0,
+      "y": -150,
+      "w": 420,
+      "text": "Hold space flips this view to the original, in place.\n\nFlicker-comparing the same position is how a misplaced box becomes obvious. Side-by-side at half width is how it gets missed — which is exactly how both engine bugs survived automated checks."
+    },
+    {
+      "id": "notchecked",
+      "x": 1220,
+      "y": -150,
+      "w": 420,
+      "text": "The failure that matters is invisible.\n\nThis page had no text layer, so it was copied through untouched — everything on it is still in the file. A clean-looking summary here would be the most dangerous screen in the product, so the warning outranks the redaction count."
+    },
+    {
+      "id": "background",
+      "x": 0,
+      "y": 1510,
+      "w": 420,
+      "text": "Deep runs 10–15s per page, so redaction is a background job, not a synchronous action.\n\nThe model step is named rather than shown as a spinner, because a 20-page return pauses for minutes and an unexplained wait reads as a hang."
+    },
+    {
+      "id": "rules",
+      "x": 540,
+      "y": 1550,
+      "w": 420,
+      "text": "This editor exists because TextEdit saves RTF by default, which silently invalidated every rule in a real redact.txt. Writing plain UTF-8 always makes that failure impossible rather than merely diagnosed.\n\nThe right rail makes the vocabulary discoverable, and separates what regex can find from what needs the model."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

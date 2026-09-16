@@ -75,6 +75,67 @@ public struct PDFRedactor: Sendable {
     /// sensitive. Supplied by the caller so the redactor need not know about the model.
     public typealias VisibleTextInspector = @Sendable (String) async throws -> [String]
 
+    /// One span that was blacked out, and what accounted for it.
+    ///
+    /// `text` is the redacted value itself, so it is exactly the information the user is
+    /// trying to protect. Anything displaying a finding should mask it by default.
+    public struct Finding: Hashable, Sendable {
+        public enum Origin: Hashable, Sendable {
+            /// Matched by a rule or detector on the document's own text.
+            case rule
+            /// Located from a proposal by something non-deterministic (the model tier).
+            case proposal
+            /// Still legible after the first render, and caught by reading the page back.
+            case caughtOnRecheck
+        }
+
+        public let pageIndex: Int
+        public let text: String
+        public let ruleDescription: String
+        public let origin: Origin
+        /// `true` when the rule *is* the value — a quoted exact rule. Anything masking
+        /// `text` has to mask the description too, or the label gives the value away.
+        public let ruleIsLiteral: Bool
+
+        public init(
+            pageIndex: Int,
+            text: String,
+            ruleDescription: String,
+            origin: Origin,
+            ruleIsLiteral: Bool = false
+        ) {
+            self.pageIndex = pageIndex
+            self.text = text
+            self.ruleDescription = ruleDescription
+            self.origin = origin
+            self.ruleIsLiteral = ruleIsLiteral
+        }
+    }
+
+    /// What happened to one page.
+    ///
+    /// `notExamined` is the case that matters: the page carried no text to search, so
+    /// nothing on it was looked at and it was copied through as it was. A summary that
+    /// reports only the redaction count turns that into a clean-looking result, which is the
+    /// failure spec §7 calls dangerous — so it is reported per page rather than inferred.
+    public struct PageOutcome: Sendable {
+        public enum Status: Equatable, Sendable {
+            case redacted(items: Int, passes: Int)
+            case noMatches
+            case notExamined(reason: String)
+        }
+
+        public let index: Int
+        public let status: Status
+        public let findings: [Finding]
+
+        public init(index: Int, status: Status, findings: [Finding]) {
+            self.index = index
+            self.status = status
+            self.findings = findings
+        }
+    }
+
     public struct Result: Sendable {
         public let outputURL: URL
         /// How many spans were blacked out, for the §3 completion message.
@@ -87,6 +148,18 @@ public struct PDFRedactor: Sendable {
         public let verificationPasses: Int
         /// Spans that survived the first render and were caught by reading the page back.
         public let residueCaughtOnRecheck: [String]
+        /// What happened to each page, in order.
+        public let pages: [PageOutcome]
+
+        /// Pages that carried no text to search and were copied through unexamined.
+        public var unexaminedPages: [Int] {
+            pages.compactMap { page in
+                if case .notExamined = page.status { return page.index + 1 }
+                return nil
+            }
+        }
+
+        public var findings: [Finding] { pages.flatMap(\.findings) }
     }
 
     public enum Failure: Error, LocalizedError {
@@ -150,8 +223,13 @@ public struct PDFRedactor: Sendable {
         var rulesApplied: Set<String> = []
         var worstPassCount = 1
         var residueCaught: [String] = []
+        var outcomes: [PageOutcome] = []
 
         for index in 0 ..< document.pageCount {
+            // A deep run takes minutes, so it has to be stoppable. Cancelling between pages
+            // and between passes means nothing half-redacted is ever written: the candidate
+            // file is only assembled after the loop completes.
+            try Task.checkCancellation()
             guard let page = document.page(at: index) else { continue }
             progress?(.scanning(page: index + 1, of: document.pageCount))
 
@@ -176,10 +254,35 @@ public struct PDFRedactor: Sendable {
                 if let copy = page.copy() as? PDFPage {
                     output.insert(copy, at: output.pageCount)
                 }
+                // A page with nothing to search is not the same as a page with nothing on
+                // it, and the difference has to survive into the result.
+                let examined = !pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                outcomes.append(
+                    PageOutcome(
+                        index: index,
+                        status: examined
+                            ? .noMatches
+                            : .notExamined(reason: "no extractable text — scanned or image-only"),
+                        findings: []
+                    )
+                )
                 continue
             }
 
             for match in matches { rulesApplied.insert(match.source.ruleDescription) }
+
+            let proposed = Set((additionalMatches[index] ?? []).map(\.range))
+            var findings = matches.map { match in
+                let isLiteral: Bool
+                if case .exact = match.source { isLiteral = true } else { isLiteral = false }
+                return Finding(
+                    pageIndex: index,
+                    text: match.matchedText,
+                    ruleDescription: match.source.ruleDescription,
+                    origin: proposed.contains(match.range) ? .proposal : .rule,
+                    ruleIsLiteral: isLiteral
+                )
+            }
 
             // Read the page as drawn before deciding where anything goes. PDFKit's text
             // geometry is not dependable enough to be the only source (see
@@ -208,11 +311,28 @@ public struct PDFRedactor: Sendable {
                 progress: progress
             )
 
+            findings += settled.residue.map { text in
+                Finding(
+                    pageIndex: index,
+                    text: text,
+                    ruleDescription: "found by reading the page back",
+                    origin: .caughtOnRecheck
+                )
+            }
+
             output.insert(settled.page, at: output.pageCount)
-            totalRedactions += matches.count + doomedAnnotations.count + settled.extraRedactions
+            let redactedHere = matches.count + doomedAnnotations.count + settled.extraRedactions
+            totalRedactions += redactedHere
             residueCaught += settled.residue
             worstPassCount = max(worstPassCount, settled.passes)
             pagesRasterized += 1
+            outcomes.append(
+                PageOutcome(
+                    index: index,
+                    status: .redacted(items: redactedHere, passes: settled.passes),
+                    findings: findings
+                )
+            )
         }
 
         guard totalRedactions > 0 else { throw Failure.nothingMatched }
@@ -245,7 +365,8 @@ public struct PDFRedactor: Sendable {
             pageCount: document.pageCount,
             rulesApplied: rulesApplied.sorted(),
             verificationPasses: worstPassCount,
-            residueCaughtOnRecheck: residueCaught
+            residueCaughtOnRecheck: residueCaught,
+            pages: outcomes.sorted { $0.index < $1.index }
         )
     }
 
@@ -280,6 +401,7 @@ public struct PDFRedactor: Sendable {
         var pass = 1
 
         while true {
+            try Task.checkCancellation()
             progress?(.rendering(page: pageNumber, pass: pass))
             guard let image = renderImage(page: page, blackingOut: boxes) else {
                 throw Failure.renderFailed(page: pageNumber)

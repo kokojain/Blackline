@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "BlacklineKit", targets: ["BlacklineKit"]),
         .executable(name: "blackline-preview", targets: ["BlacklinePreview"]),
         .executable(name: "blackline-redact", targets: ["BlacklineRedactCLI"]),
+        .executable(name: "Blackline", targets: ["BlacklineApp"]),
     ],
     targets: [
         .target(name: "BlacklineKit"),
@@ -18,12 +19,21 @@ let package = Package(
             name: "BlacklinePreview",
             dependencies: ["BlacklineKit", "BlacklineIntelligence"]
         ),
+        .target(
+            name: "BlacklineUI",
+            dependencies: ["BlacklineKit", "BlacklineRedactor", "BlacklineIntelligence"]
+        ),
+        .executableTarget(name: "BlacklineApp", dependencies: ["BlacklineUI"]),
         .executableTarget(
             name: "BlacklineRedactCLI",
             dependencies: ["BlacklineKit", "BlacklineIntelligence", "BlacklineRedactor"]
         ),
         .testTarget(name: "BlacklineKitTests", dependencies: ["BlacklineKit"]),
         .testTarget(name: "BlacklineOCRTests", dependencies: ["BlacklineOCR"]),
+        .testTarget(
+            name: "BlacklineUITests",
+            dependencies: ["BlacklineUI", "BlacklineKit", "BlacklineRedactor"]
+        ),
         .testTarget(
             name: "BlacklineRedactorTests",
             dependencies: ["BlacklineRedactor", "BlacklineKit"]

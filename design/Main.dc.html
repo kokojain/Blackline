@@ -1,0 +1,325 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --paper: #ffffff;
+      --bg: oklch(0.98 0.002 250);
+      --chrome: oklch(0.965 0.003 250);
+      --sidebar: oklch(0.955 0.004 250);
+      --line: oklch(0.905 0.004 250);
+      --line-strong: oklch(0.85 0.005 250);
+      --text: oklch(0.28 0.012 260);
+      --muted: oklch(0.55 0.012 260);
+      --faint: oklch(0.69 0.010 260);
+      --accent: oklch(0.56 0.17 258);
+      --accent-soft: oklch(0.94 0.035 258);
+      --warn: oklch(0.63 0.15 62);
+      --warn-soft: oklch(0.955 0.035 70);
+      --ok: oklch(0.56 0.12 155);
+      --danger: oklch(0.56 0.18 25);
+      --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    body { margin: 0; background: transparent; font-family: var(--ui); color: var(--text); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: oklch(0.46 0.17 258); }
+    .win { border-radius: 10px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.20), 0 0 0 0.5px rgba(0,0,0,.28); }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 6px; border: 0.5px solid var(--line-strong); background: var(--paper); font-size: 12px; color: var(--text); box-shadow: 0 0.5px 1px rgba(0,0,0,.05); }
+    .row { display: flex; align-items: center; }
+  </style>
+</helmet>
+
+<div class="win" style="width: 1100px; height: 720px; display: flex; flex-direction: column; background: var(--bg); font-size: 13px;">
+
+  <!-- Title bar -->
+  <div class="row" style="height: 52px; padding: 0 16px; gap: 14px; background: var(--chrome); border-bottom: 0.5px solid var(--line); flex: none;">
+    <div class="row" style="gap: 8px; flex: none;">
+      <span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5F57;"></span>
+      <span style="width: 12px; height: 12px; border-radius: 50%; background: #FEBC2E;"></span>
+      <span style="width: 12px; height: 12px; border-radius: 50%; background: #28C840;"></span>
+    </div>
+    <div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;">
+      <div style="font-size: 13px; font-weight: 600;">2025US Knob LLC Form 1120S redacted.pdf</div>
+      <div style="font-size: 11px; color: var(--muted);">12 redacted &middot; 4 pages &middot; verified</div>
+    </div>
+    <div style="width: 68px; flex: none;"></div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="row" style="height: 44px; padding: 0 14px; gap: 8px; background: var(--chrome); border-bottom: 0.5px solid var(--line); flex: none;">
+    <div class="row" style="gap: 6px; padding: 2px 8px 2px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 600;">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 4.4-3 8.3-7 9-4-0.7-7-4.6-7-9V7z"/><path d="M9 12l2 2 4-4"/></svg>
+      Deep check
+    </div>
+    <div style="font-size: 11px; color: var(--muted);">rules &middot; read-back &middot; on-device model</div>
+    <div style="flex-grow: 1;"></div>
+    <button class="tb-btn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+      Reveal in Finder
+    </button>
+    <button class="tb-btn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12"/><path d="M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+      Delete copy
+    </button>
+  </div>
+
+  <!-- Body -->
+  <div style="flex-grow: 1; display: grid; grid-template-columns: 186px minmax(0, 1fr) 316px; min-height: 0;">
+
+    <!-- Page rail -->
+    <aside style="background: var(--sidebar); border-right: 0.5px solid var(--line); padding: 12px 10px; display: flex; flex-direction: column; gap: 10px; overflow: hidden;">
+      <div style="font-size: 10.5px; font-weight: 600; color: var(--faint); letter-spacing: 0.04em; text-transform: uppercase; padding-left: 4px;">Pages</div>
+
+      <!-- page 1 selected -->
+      <div style="display: flex; flex-direction: column; gap: 5px; padding: 6px; border-radius: 8px; background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent);">
+        <div style="height: 92px; border-radius: 3px; background: var(--paper); border: 0.5px solid var(--line-strong); padding: 7px 8px; display: flex; flex-direction: column; gap: 4px; overflow: hidden;">
+          <div style="height: 3px; width: 62%; background: oklch(0.80 0.005 260);"></div>
+          <div style="height: 7px; width: 52%; background: #000;"></div>
+          <div style="height: 3px; width: 44%; background: oklch(0.86 0.005 260);"></div>
+          <div style="height: 7px; width: 66%; background: #000;"></div>
+          <div style="height: 3px; width: 70%; background: oklch(0.86 0.005 260);"></div>
+          <div style="height: 7px; width: 40%; background: #000;"></div>
+        </div>
+        <div class="row" style="gap: 5px; padding: 0 2px;">
+          <span style="font-size: 11px; font-weight: 600;">1</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
+          <span style="font-size: 10.5px; color: var(--muted);">8 redacted</span>
+        </div>
+      </div>
+
+      <!-- page 2 -->
+      <div style="display: flex; flex-direction: column; gap: 5px; padding: 6px; border-radius: 8px;">
+        <div style="height: 92px; border-radius: 3px; background: var(--paper); border: 0.5px solid var(--line-strong); padding: 7px 8px; display: flex; flex-direction: column; gap: 4px; overflow: hidden;">
+          <div style="height: 3px; width: 58%; background: oklch(0.86 0.005 260);"></div>
+          <div style="height: 3px; width: 72%; background: oklch(0.86 0.005 260);"></div>
+          <div style="height: 7px; width: 48%; background: #000;"></div>
+          <div style="height: 3px; width: 64%; background: oklch(0.86 0.005 260);"></div>
+          <div style="height: 3px; width: 50%; background: oklch(0.86 0.005 260);"></div>
+        </div>
+        <div class="row" style="gap: 5px; padding: 0 2px;">
+          <span style="font-size: 11px; font-weight: 600;">2</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
+          <span style="font-size: 10.5px; color: var(--muted);">4 redacted</span>
+        </div>
+      </div>
+
+      <!-- page 3 -->
+      <div style="display: flex; flex-direction: column; gap: 5px; padding: 6px; border-radius: 8px;">
+        <div style="height: 92px; border-radius: 3px; background: var(--paper); border: 0.5px solid var(--line-strong); padding: 7px 8px; display: flex; flex-direction: column; gap: 4px; overflow: hidden;">
+          <div style="height: 3px; width: 66%; background: oklch(0.86 0.005 260);"></div>
+          <div style="height: 3px; width: 54%; background: oklch(0.86 0.005 260);"></div>
+          <div style="height: 3px; width: 70%; background: oklch(0.86 0.005 260);"></div>
+        </div>
+        <div class="row" style="gap: 5px; padding: 0 2px;">
+          <span style="font-size: 11px; font-weight: 600;">3</span>
+          <span style="color: var(--faint); font-size: 12px; line-height: 1;">&mdash;</span>
+          <span style="font-size: 10.5px; color: var(--muted);">no matches</span>
+        </div>
+      </div>
+
+      <!-- page 4: not checked -->
+      <div style="display: flex; flex-direction: column; gap: 5px; padding: 6px; border-radius: 8px; background: var(--warn-soft); box-shadow: inset 0 0 0 1px oklch(0.85 0.09 70);">
+        <div style="height: 92px; border-radius: 3px; background: oklch(0.93 0.006 260); border: 0.5px solid var(--line-strong); display: flex; align-items: center; justify-content: center;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5l8.5 15h-17z"/><path d="M12 10v4"/><path d="M12 17.2v.1"/></svg>
+        </div>
+        <div class="row" style="gap: 5px; padding: 0 2px;">
+          <span style="font-size: 11px; font-weight: 600;">4</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5l8.5 15h-17z"/><path d="M12 10v3.5"/><path d="M12 16.8v.1"/></svg>
+          <span style="font-size: 10.5px; color: var(--warn); font-weight: 600;">not checked</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Page stage -->
+    <main style="position: relative; background: oklch(0.90 0.004 250); display: flex; align-items: flex-start; justify-content: center; padding: 22px 0; overflow: hidden;">
+
+      <div style="width: 468px; height: 606px; background: var(--paper); box-shadow: 0 2px 10px rgba(0,0,0,.14); padding: 30px 34px; display: flex; flex-direction: column; gap: 13px; font-size: 9.5px; color: oklch(0.22 0.01 260);">
+
+        <div class="row" style="gap: 10px; border-bottom: 1.5px solid #000; padding-bottom: 7px;">
+          <div style="font-size: 17px; font-weight: 800; letter-spacing: -0.01em;">1120-S</div>
+          <div style="flex-grow: 1; line-height: 1.25;">
+            <div style="font-weight: 700; font-size: 10px;">U.S. Income Tax Return for an S Corporation</div>
+            <div style="color: var(--muted); font-size: 8.5px;">Department of the Treasury &middot; Internal Revenue Service</div>
+          </div>
+          <div style="font-size: 15px; font-weight: 700;">2025</div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 9px;">
+
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">Name</div>
+            <div style="height: 15px; background: #000; width: 128px; border-radius: 1px;"></div>
+          </div>
+
+          <!-- selected finding -->
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">Employer identification number</div>
+            <div style="position: relative; width: 104px;">
+              <div style="height: 15px; background: #000; border-radius: 1px;"></div>
+              <div style="position: absolute; inset: -4px; border: 2px solid var(--accent); border-radius: 4px;"></div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">Number, street, and room or suite no.</div>
+            <div style="height: 15px; background: #000; width: 196px; border-radius: 1px;"></div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">City or town, state, ZIP code</div>
+            <div style="height: 15px; background: #000; width: 154px; border-radius: 1px;"></div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">Date incorporated</div>
+            <div style="height: 15px; background: #000; width: 74px; border-radius: 1px;"></div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">Total assets</div>
+            <div style="font-family: var(--mono); font-size: 9px;">$ 1,284,300</div>
+          </div>
+        </div>
+
+        <div style="height: 1px; background: var(--line-strong); margin-top: 2px;"></div>
+
+        <div style="font-weight: 700; font-size: 9px;">Schedule K-1 &mdash; Shareholder information</div>
+
+        <div style="display: flex; flex-direction: column; gap: 9px;">
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">Shareholder&rsquo;s name</div>
+            <div style="height: 15px; background: #000; width: 116px; border-radius: 1px;"></div>
+          </div>
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">Shareholder&rsquo;s identifying number</div>
+            <div style="height: 15px; background: #000; width: 96px; border-radius: 1px;"></div>
+          </div>
+          <div style="display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px; align-items: center;">
+            <div style="color: var(--muted);">Percentage of stock ownership</div>
+            <div style="font-family: var(--mono); font-size: 9px;">100.000 %</div>
+          </div>
+        </div>
+
+        <div style="flex-grow: 1;"></div>
+        <div style="color: var(--faint); font-size: 8px; border-top: 0.5px solid var(--line); padding-top: 6px;">Form 1120-S (2025) &nbsp;&middot;&nbsp; Page 1</div>
+      </div>
+
+      <!-- peek affordance -->
+      <div class="row" style="position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); gap: 8px; padding: 7px 13px; border-radius: 999px; background: rgba(28,28,30,.86); color: #fff; font-size: 11.5px; backdrop-filter: blur(12px);">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+        Hold
+        <kbd style="font-family: var(--ui); font-size: 10.5px; padding: 1.5px 7px; border-radius: 4px; background: rgba(255,255,255,.20);">space</kbd>
+        to compare with the original
+      </div>
+    </main>
+
+    <!-- Findings -->
+    <aside style="background: var(--chrome); border-left: 0.5px solid var(--line); display: flex; flex-direction: column; min-height: 0;">
+
+      <div class="row" style="padding: 12px 14px 10px; gap: 8px; border-bottom: 0.5px solid var(--line); flex: none;">
+        <div style="font-size: 12px; font-weight: 700; flex-grow: 1;">What was removed</div>
+        <button class="tb-btn" style="height: 22px; padding: 0 8px; font-size: 11px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>
+          Reveal values
+        </button>
+      </div>
+
+      <div style="flex-grow: 1; overflow: hidden; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px;">
+
+        <!-- selected row -->
+        <div style="display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 7px; background: var(--accent); color: #fff;">
+          <div class="row" style="gap: 8px;">
+            <span style="font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; flex-grow: 1;">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span>
+            <span style="font-size: 10.5px; opacity: .85;">p.1</span>
+          </div>
+          <div class="row" style="gap: 6px;">
+            <span style="font-size: 10.5px; opacity: .92;">employer identification numbers</span>
+            <span style="font-size: 9.5px; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.22);">found on re-read</span>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 7px;">
+          <div class="row" style="gap: 8px;">
+            <span style="font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; flex-grow: 1;">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span>
+            <span style="font-size: 10.5px; color: var(--faint);">p.1</span>
+          </div>
+          <div style="font-size: 10.5px; color: var(--muted);">social security numbers</div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 7px;">
+          <div class="row" style="gap: 8px;">
+            <span style="font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; flex-grow: 1;">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span>
+            <span style="font-size: 10.5px; color: var(--faint);">p.1</span>
+          </div>
+          <div style="font-size: 10.5px; color: var(--muted);">rule &ldquo;Knob LLC&rdquo;</div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 7px;">
+          <div class="row" style="gap: 8px;">
+            <span style="font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; flex-grow: 1;">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span>
+            <span style="font-size: 10.5px; color: var(--faint);">p.1</span>
+          </div>
+          <div class="row" style="gap: 6px;">
+            <span style="font-size: 10.5px; color: var(--muted);">street addresses</span>
+            <span style="font-size: 9.5px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent);">on-device model</span>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 7px;">
+          <div class="row" style="gap: 8px;">
+            <span style="font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; flex-grow: 1;">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span>
+            <span style="font-size: 10.5px; color: var(--faint);">p.1</span>
+          </div>
+          <div style="font-size: 10.5px; color: var(--muted);">person names</div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 7px;">
+          <div class="row" style="gap: 8px;">
+            <span style="font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; flex-grow: 1;">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span>
+            <span style="font-size: 10.5px; color: var(--faint);">p.2</span>
+          </div>
+          <div style="font-size: 10.5px; color: var(--muted);">account numbers</div>
+        </div>
+      </div>
+
+      <div style="border-top: 0.5px solid var(--line); padding: 10px 12px; flex: none; display: flex; flex-direction: column; gap: 7px;">
+        <button class="tb-btn" style="width: 100%; justify-content: center; height: 27px;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          Add rules from this document
+        </button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Status bar -->
+  <div class="row" style="height: 28px; padding: 0 14px; gap: 10px; background: var(--chrome); border-top: 0.5px solid var(--line); font-size: 11px; color: var(--muted); flex: none;">
+    <div class="row" style="gap: 5px;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
+      <span>Every redacted page was rendered, read back and came up clean</span>
+    </div>
+    <div style="flex-grow: 1;"></div>
+    <span>2 caught on re-read</span>
+    <span style="color: var(--line-strong);">|</span>
+    <span>up to 2 passes per page</span>
+    <span style="color: var(--line-strong);">|</span>
+    <span>original untouched</span>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview":{"width":1100,"height":720}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

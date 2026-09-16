@@ -1,0 +1,197 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --paper: #ffffff;
+      --bg: oklch(0.98 0.002 250);
+      --chrome: oklch(0.965 0.003 250);
+      --sidebar: oklch(0.955 0.004 250);
+      --line: oklch(0.905 0.004 250);
+      --line-strong: oklch(0.85 0.005 250);
+      --text: oklch(0.28 0.012 260);
+      --muted: oklch(0.55 0.012 260);
+      --faint: oklch(0.69 0.010 260);
+      --accent: oklch(0.56 0.17 258);
+      --accent-soft: oklch(0.94 0.035 258);
+      --warn: oklch(0.63 0.15 62);
+      --warn-ink: oklch(0.44 0.13 62);
+      --warn-soft: oklch(0.96 0.03 70);
+      --ok: oklch(0.56 0.12 155);
+      --lit: oklch(0.46 0.13 28);
+      --cat: oklch(0.44 0.11 175);
+      --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    body { margin: 0; background: transparent; font-family: var(--ui); color: var(--text); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: oklch(0.46 0.17 258); }
+    .win { border-radius: 10px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.20), 0 0 0 0.5px rgba(0,0,0,.28); }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 6px; border: 0.5px solid var(--line-strong); background: var(--paper); font-size: 12px; color: var(--text); box-shadow: 0 0.5px 1px rgba(0,0,0,.05); }
+    .row { display: flex; align-items: center; }
+    .ln { font-family: var(--mono); font-size: 11.5px; color: var(--faint); text-align: right; padding-right: 12px; user-select: none; }
+    .code { font-family: var(--mono); font-size: 12.5px; line-height: 20px; }
+    .chip { padding: 2px 8px; border-radius: 999px; border: 0.5px solid var(--line-strong); background: var(--paper); font-size: 11px; color: var(--text); }
+  </style>
+</helmet>
+
+<div class="win" style="width: 860px; height: 620px; display: flex; flex-direction: column; background: var(--bg); font-size: 13px;">
+
+  <div class="row" style="height: 52px; padding: 0 16px; gap: 14px; background: var(--chrome); border-bottom: 0.5px solid var(--line); flex: none;">
+    <div class="row" style="gap: 8px; flex: none;">
+      <span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5F57;"></span>
+      <span style="width: 12px; height: 12px; border-radius: 50%; background: #FEBC2E;"></span>
+      <span style="width: 12px; height: 12px; border-radius: 50%; background: #28C840;"></span>
+    </div>
+    <div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;">
+      <div style="font-size: 13px; font-weight: 600;">Redaction rules</div>
+      <div style="font-size: 11px; color: var(--muted);">~/Documents/redact.txt</div>
+    </div>
+    <div style="width: 68px; flex: none;"></div>
+  </div>
+
+  <div class="row" style="height: 44px; padding: 0 14px; gap: 8px; background: var(--chrome); border-bottom: 0.5px solid var(--line); flex: none;">
+    <button class="tb-btn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      Add rules from a document&hellip;
+    </button>
+    <div style="flex-grow: 1;"></div>
+    <div class="row" style="gap: 5px; font-size: 11px; color: var(--muted);">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>
+      Saved as plain text
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; display: grid; grid-template-columns: minmax(0, 1fr) 244px; min-height: 0;">
+
+    <!-- Editor -->
+    <div style="background: var(--paper); overflow: hidden; padding: 12px 0;">
+      <div style="display: grid; grid-template-columns: 46px minmax(0, 1fr);">
+
+        <div class="ln">1</div>
+        <div class="code" style="color: var(--faint);"># Blackline rules &mdash; lines starting with # are comments</div>
+
+        <div class="ln">2</div><div class="code">&nbsp;</div>
+
+        <div class="ln">3</div>
+        <div class="code" style="color: var(--faint);"># Exact matches (quoted)</div>
+
+        <div class="ln">4</div>
+        <div class="code" style="color: var(--lit);">"Jane Q"</div>
+
+        <div class="ln">5</div>
+        <div class="code" style="color: var(--lit);">"Taxpayer"</div>
+
+        <div class="ln">6</div>
+        <div class="code" style="color: var(--lit);">"Knob LLC"</div>
+
+        <div class="ln">7</div>
+        <div class="code" style="color: var(--lit);">"123 Harbor View Drive"</div>
+
+        <!-- diagnostic: unterminated quote -->
+        <div class="ln" style="background: var(--warn-soft); position: relative;">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--warn-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 7px; top: 5px;"><path d="M12 4.5l8.5 15h-17z"/><path d="M12 10v3.5"/><path d="M12 16.8v.1"/></svg>
+          8
+        </div>
+        <div class="code" style="background: var(--warn-soft); color: var(--lit); text-decoration: underline wavy oklch(0.63 0.15 62); text-underline-offset: 3px;">"Nikhil</div>
+
+        <div class="ln" style="background: var(--warn-soft);">&nbsp;</div>
+        <div class="row" style="background: var(--warn-soft); gap: 8px; padding: 2px 0 8px;">
+          <span style="font-size: 11.5px; color: var(--warn-ink);">Missing a closing quote &mdash; this rule is being skipped.</span>
+          <button class="chip" style="border-color: oklch(0.80 0.10 70);">Add it</button>
+        </div>
+
+        <div class="ln">9</div><div class="code">&nbsp;</div>
+
+        <div class="ln">10</div>
+        <div class="code" style="color: var(--faint);"># Descriptions (unquoted) &mdash; detected automatically</div>
+
+        <div class="ln">11</div>
+        <div class="code" style="color: var(--cat);">social security numbers</div>
+
+        <div class="ln">12</div>
+        <div class="code" style="color: var(--cat);">employer identification numbers</div>
+
+        <div class="ln">13</div>
+        <div class="code" style="color: var(--cat);">account numbers</div>
+
+        <!-- diagnostic: unknown category -->
+        <div class="ln" style="background: var(--warn-soft); position: relative;">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--warn-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 7px; top: 5px;"><path d="M12 4.5l8.5 15h-17z"/><path d="M12 10v3.5"/><path d="M12 16.8v.1"/></svg>
+          14
+        </div>
+        <div class="code" style="background: var(--warn-soft); text-decoration: underline wavy oklch(0.63 0.15 62); text-underline-offset: 3px;">shoe sizes</div>
+
+        <div class="ln" style="background: var(--warn-soft);">&nbsp;</div>
+        <div style="background: var(--warn-soft); padding: 2px 0 9px; display: flex; flex-direction: column; gap: 6px;">
+          <span style="font-size: 11.5px; color: var(--warn-ink);">Not a category Blackline recognises &mdash; this rule is being skipped. Did you mean:</span>
+          <div class="row" style="gap: 6px;">
+            <button class="chip">street addresses</button>
+            <button class="chip">phone numbers</button>
+            <button class="chip" style="color: var(--muted);">Quote it as exact text</button>
+          </div>
+        </div>
+
+        <div class="ln">15</div>
+        <div class="code" style="color: var(--line-strong);">|</div>
+      </div>
+    </div>
+
+    <!-- Vocabulary reference: the documented categories, discoverable rather than guessed -->
+    <aside style="background: var(--sidebar); border-left: 0.5px solid var(--line); padding: 14px 12px; display: flex; flex-direction: column; gap: 10px; overflow: hidden;">
+      <div style="font-size: 10.5px; font-weight: 600; color: var(--faint); letter-spacing: 0.04em; text-transform: uppercase;">Categories it can detect</div>
+
+      <div style="display: flex; flex-direction: column; gap: 2px; font-size: 12px;">
+        <div class="row" style="gap: 7px; height: 22px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg><span>social security numbers</span></div>
+        <div class="row" style="gap: 7px; height: 22px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg><span>employer identification numbers</span></div>
+        <div class="row" style="gap: 7px; height: 22px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg><span>credit card numbers</span></div>
+        <div class="row" style="gap: 7px; height: 22px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg><span>account numbers</span></div>
+        <div class="row" style="gap: 7px; height: 22px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg><span>passport numbers</span></div>
+        <div class="row" style="gap: 7px; height: 22px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg><span>driver&rsquo;s license numbers</span></div>
+      </div>
+
+      <div style="height: 0.5px; background: var(--line);"></div>
+
+      <div style="font-size: 10.5px; font-weight: 600; color: var(--faint); letter-spacing: 0.04em; text-transform: uppercase;">Needs the model</div>
+      <div style="display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted);">
+        <div class="row" style="gap: 7px; height: 22px;"><span style="width: 11px; text-align: center; color: var(--faint);">&mdash;</span><span>person names</span></div>
+        <div class="row" style="gap: 7px; height: 22px;"><span style="width: 11px; text-align: center; color: var(--faint);">&mdash;</span><span>street addresses</span></div>
+        <div class="row" style="gap: 7px; height: 22px;"><span style="width: 11px; text-align: center; color: var(--faint);">&mdash;</span><span>dates of birth</span></div>
+      </div>
+
+      <div style="font-size: 11px; color: var(--muted); line-height: 1.45; padding: 9px 10px; border-radius: 7px; background: var(--paper); border: 0.5px solid var(--line);">
+        On a tax form a name is split across fields, so <span style="font-family: var(--mono); font-size: 11px;">"Jane Q Taxpayer"</span> never matches. Quote each part on its own line.
+      </div>
+    </aside>
+  </div>
+
+  <div class="row" style="height: 28px; padding: 0 14px; gap: 10px; background: var(--chrome); border-top: 0.5px solid var(--line); font-size: 11px; color: var(--muted); flex: none;">
+    <span>7 rules in effect</span>
+    <span style="color: var(--line-strong);">|</span>
+    <div class="row" style="gap: 5px; color: var(--warn-ink);">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5l8.5 15h-17z"/><path d="M12 10v3.5"/><path d="M12 16.8v.1"/></svg>
+      <span>2 lines skipped</span>
+    </div>
+    <div style="flex-grow: 1;"></div>
+    <span>Plain text, UTF-8</span>
+    <span style="color: var(--line-strong);">|</span>
+    <span>Re-read on every run</span>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview":{"width":860,"height":620}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

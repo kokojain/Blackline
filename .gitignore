@@ -7,3 +7,7 @@
 samples/*
 !samples/README.md
 !samples/redact.example.txt
+
+# Seeded design canvas: ~2MB of editor payload, regenerated from the .dc.html sources.
+design/*.html
+!design/*.dc.html

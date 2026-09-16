@@ -52,6 +52,9 @@ Sources/BlacklineOCR/      Vision text recognition; page geometry read from pixe
 Sources/BlacklineRedactor/ PDF rendering, redaction, and verification (PDFKit)
 Sources/BlacklinePreview/  blackline-preview, a read-only CLI (this one does use PDFKit)
 Sources/BlacklineRedactCLI/ blackline-redact, writes the redacted copy
+Sources/BlacklineUI/       the app's views and job model (a library, so it can be rendered)
+Sources/BlacklineApp/      Blackline.app entry point: MenuBarExtra + review window
+Scripts/make-app.sh        assembles Blackline.app around the SwiftPM executable
 Tests/BlacklineKitTests/   swift-testing (`import Testing`)
 samples/                   scratch space for test documents; gitignored
 ```
@@ -63,7 +66,13 @@ swift test --filter SSNMatcherTests  # one suite
 
 swift run blackline-preview <file.pdf> [--rules <redact.txt>] [--mask] [--llm]
 swift run blackline-redact  <file.pdf> [--rules <redact.txt>] [--llm] [--scale N]
+
+./Scripts/make-app.sh && open .build/Blackline.app   # the menu bar app
 ```
+
+SwiftPM cannot build an app bundle, and a menu bar app needs one — `LSUIElement` keeps it
+out of the Dock and UserNotifications will not register for a loose binary. `make-app.sh`
+wraps the executable and ad-hoc signs it.
 
 `blackline-preview` reports what *would* be redacted. It writes nothing and cannot produce
 a redacted PDF — the redaction stage does not exist. Its most important output is what it
@@ -148,6 +157,37 @@ original is never modified and nothing is ever overwritten (§2, §3). The candi
 written to a temporary file, reopened, and re-scanned; only then does it move to the real
 name. A document where no rule matches produces **no file at all**, because a copy identical
 to the original is a privacy failure rather than a success (§3).
+
+### The app layer
+
+`BlacklineUI` is a library, not part of the executable, so its views can be rendered
+offscreen and looked at. `BlacklineApp` is only the `@main` entry point.
+
+The review window exists because **under-redaction is invisible in a summary and obvious on
+the page**. Every design decision in it follows from that:
+
+- **Hold space flips to the original in place.** Flicker-comparing the same position is how a
+  misplaced box becomes obvious; side-by-side at half width is how one gets missed.
+- **`not checked` outranks the redaction count.** It colours the status bar, the page
+  thumbnail and the findings pane, and the window opens on an unexamined page when there is
+  one. A clean-looking total over a page nobody examined is the worst screen the app could
+  show.
+- **Status is always a glyph plus words**, never colour alone.
+- **Findings are masked by default — including the rule label.** A quoted rule *is* the
+  value, so `Finding.ruleIsLiteral` exists to let the row show "exact rule" instead of
+  handing back what the mask hid. This was caught by rendering the list and reading it.
+
+Because deep runs 10–15s per page, redaction is a background job: progress names the current
+step (the model pass says so rather than spinning), the queue is sequential, and
+`Task.checkCancellation()` at page and pass boundaries makes Cancel real. Deep degrades to
+thorough where Apple Intelligence is unavailable and **says so in the result** — silently
+degrading would misrepresent what was checked.
+
+Snapshot tests render the real views and write PNGs to
+`$TMPDIR/blackline-ui-snapshots`. Two limits worth knowing: `ImageRenderer` does not lay out
+`ScrollView` or `LazyVStack` content, so rows are rendered on their own, and two concurrent
+renders deadlock — the rendering suites are `.serialized` so `swift test` works without
+`--no-parallel`.
 
 ### Detection tiers
 
