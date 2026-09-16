@@ -30,6 +30,10 @@ public struct ReviewView: View {
 
     private func content(_ run: CompletedRun) -> some View {
         VStack(spacing: 0) {
+            if run.isUnverified {
+                UnverifiedBar(run: run)
+                Divider()
+            }
             Toolbar(run: run)
             Divider()
 
@@ -80,6 +84,70 @@ public struct ReviewView: View {
     }
 }
 
+// MARK: - Decision
+
+/// Shown when the copy was written but could not be proven clean.
+///
+/// The file is real and sits beside the original under its redacted name. What the engine
+/// could not do is vouch for it, and it says so in its own words rather than summarising
+/// them away — because whether those objections matter is a judgement only the person who
+/// owns the document can make. Recognition misreads, and the checker reports fragments of
+/// labels beside the black boxes; several passes of that is not evidence the document is
+/// unsafe, only that the machine ran out of ways to be sure.
+private struct UnverifiedBar: View {
+    let run: CompletedRun
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingDelete = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.warn)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Saved, but not verified — please review it")
+                    .font(.system(size: 12.5, weight: .bold))
+
+                Text("Redaction ran and the copy is saved beside the original. After \(run.result.verificationPasses) pass\(run.result.verificationPasses == 1 ? "" : "es") \(run.problems.count) thing\(run.problems.count == 1 ? "" : "s") still looked readable to the checker. Compare against the original and decide for yourself.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ForEach(run.problems.prefix(4), id: \.self) { problem in
+                    Text("· \(problem)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            VStack(alignment: .trailing, spacing: 6) {
+                Button {
+                    Notifier.reveal(run.displayURL)
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Delete copy", role: .destructive) { confirmingDelete = true }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.warnFill)
+        .confirmationDialog("Delete \(run.name)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete copy", role: .destructive) {
+                run.deleteCopy()
+                dismiss()
+            }
+        } message: {
+            Text("The original is untouched and stays where it is.")
+        }
+    }
+}
+
 // MARK: - Toolbar
 
 private struct Toolbar: View {
@@ -101,16 +169,18 @@ private struct Toolbar: View {
 
             Spacer()
 
-            Button {
-                Notifier.reveal(run.result.outputURL)
-            } label: {
-                Label("Reveal in Finder", systemImage: "folder")
-            }
+            if !run.isUnverified {
+                Button {
+                    Notifier.reveal(run.displayURL)
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
+                }
 
-            Button(role: .destructive) {
-                confirmingDelete = true
-            } label: {
-                Label("Delete copy", systemImage: "trash")
+                Button(role: .destructive) {
+                    confirmingDelete = true
+                } label: {
+                    Label("Delete copy", systemImage: "trash")
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -121,7 +191,7 @@ private struct Toolbar: View {
             titleVisibility: .visible
         ) {
             Button("Delete redacted copy", role: .destructive) {
-                try? FileManager.default.removeItem(at: run.result.outputURL)
+                try? FileManager.default.removeItem(at: run.displayURL)
                 dismiss()
             }
         } message: {
@@ -150,7 +220,7 @@ struct PageRail: View {
                 ForEach(run.result.pages, id: \.index) { page in
                     PageThumb(
                         page: page,
-                        image: renderer.image(of: run.result.outputURL, page: page.index, width: 150),
+                        image: renderer.image(of: run.displayURL, page: page.index, width: 150),
                         isSelected: selected == page.index
                     )
                     .onTapGesture { selected = page.index }
@@ -269,7 +339,7 @@ private struct PageStage: View {
 
             GeometryReader { geometry in
                 let width = min(520, geometry.size.width - 60)
-                let source = peeking ? run.sourceURL : run.result.outputURL
+                let source = peeking ? run.sourceURL : run.displayURL
 
                 VStack {
                     Spacer(minLength: 0)
@@ -496,11 +566,22 @@ struct FindingRow: View {
 private struct StatusBar: View {
     let run: CompletedRun
 
+    /// Nothing outstanding: proven clean, every page examined, and already written.
+    private var settled: Bool {
+        !run.isUnverified && run.result.unexaminedPages.isEmpty
+    }
+
     var body: some View {
         let unexamined = run.result.unexaminedPages
 
         HStack(spacing: 10) {
-            if unexamined.isEmpty {
+            // A green "came up clean" under a banner saying the opposite is the worst thing
+            // this window could show, so the undecided case is stated first.
+            if run.isUnverified {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("Saved without verification — \(run.problems.count) thing\(run.problems.count == 1 ? "" : "s") still looked readable. Check it yourself before sending it.")
+                    .fontWeight(.semibold)
+            } else if unexamined.isEmpty {
                 Image(systemName: "checkmark").foregroundStyle(Theme.ok)
                 Text(run.depth.readsPagesBack
                      ? "Every redacted page was rendered, read back and came up clean"
@@ -520,9 +601,9 @@ private struct StatusBar: View {
             Text("original untouched")
         }
         .font(.system(size: 11))
-        .foregroundStyle(unexamined.isEmpty ? .secondary : Theme.warn)
+        .foregroundStyle(settled ? .secondary : Theme.warn)
         .padding(.horizontal, 14)
         .frame(height: 28)
-        .background(unexamined.isEmpty ? AnyShapeStyle(.bar) : AnyShapeStyle(Theme.warnFill))
+        .background(settled ? AnyShapeStyle(.bar) : AnyShapeStyle(Theme.warnFill))
     }
 }

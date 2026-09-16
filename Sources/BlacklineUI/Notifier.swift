@@ -10,11 +10,11 @@ public enum Notifier {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    public static func post(title: String, body: String, reveal url: URL) {
+    public static func post(title: String, body: String, reveal url: URL?) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.userInfo = ["reveal": url.path]
+        if let url { content.userInfo = ["reveal": url.path] }
 
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)

@@ -348,3 +348,126 @@ struct PDFRedactorVerificationTests {
         #expect(log.contains("verifying"))
     }
 }
+
+@Suite("Writing a document that cannot be proven clean")
+struct PDFRedactorUnverifiedTests {
+
+    private func matchers(_ rules: String) -> [any Matcher] {
+        MatcherFactory().makeMatchers(for: RulesParser().parse(rules).ruleSet).matchers
+    }
+
+    /// One pass allowed, and that pass finds something: no budget left to clear it.
+    private func unverifiable(_ source: URL) async throws -> PDFRedactor.Result {
+        try await PDFRedactor(maximumVerificationPasses: 1, holdsUnverifiedOutputForReview: true)
+            .redact(
+                documentAt: source,
+                matchers: matchers("social security numbers"),
+                inspectVisibleText: { _ in ["Knob LLC"] }
+            )
+    }
+
+    private func fixture() throws -> URL {
+        try PDFRedactorTests.makePDF(lines: [
+            "Your social security number: 123-45-6789",
+            "Employer: Knob LLC",
+        ])
+    }
+
+    // The behaviour that matters: the run produces a file. Failing the whole document when
+    // the checker runs out of passes left the user with nothing to look at at all.
+    @Test("The copy is written, under its redacted name, beside the original")
+    func writtenAnyway() async throws {
+        let source = try fixture()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let result = try await unverifiable(source)
+
+        #expect(FileManager.default.fileExists(atPath: result.outputURL.path))
+        #expect(result.outputURL.lastPathComponent.contains("redacted"))
+        #expect(result.outputURL.deletingLastPathComponent() == source.deletingLastPathComponent())
+        #expect(result.redactedItemCount > 0)
+    }
+
+    // Written is not verified, and the result has to keep saying so — a file that looks
+    // finished and was never checked is the failure §7 warns about.
+    @Test("It reports itself as unverified, with the objections in full")
+    func reportsUnverified() async throws {
+        let source = try fixture()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let result = try await unverifiable(source)
+
+        #expect(result.isUnverified)
+        #expect(!result.problems.isEmpty)
+        #expect(result.problems.contains { $0.contains("still legible") })
+        guard case .writtenUnverified = result.disposition else {
+            Issue.record("expected the disposition to say it was not verified")
+            return
+        }
+    }
+
+    @Test("What the run did remove is still genuinely gone")
+    func redactionStillHappened() async throws {
+        let source = try fixture()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let result = try await unverifiable(source)
+        let bytes = try Data(contentsOf: result.outputURL)
+        #expect(bytes.range(of: Data("123-45-6789".utf8)) == nil)
+    }
+
+    @Test("Writing an unverified copy never overwrites an existing file")
+    func neverOverwrites() async throws {
+        let source = try fixture()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let taken = PDFRedactor.outputURL(for: source)
+        try Data().write(to: taken)
+
+        let result = try await unverifiable(source)
+        #expect(result.outputURL != taken)
+        #expect(try Data(contentsOf: taken).isEmpty, "the existing file is untouched")
+    }
+
+    @Test("Deleting the copy leaves the original alone")
+    func deletingTheCopy() async throws {
+        let source = try fixture()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let result = try await unverifiable(source)
+        PDFRedactor.deleteCopy(result)
+
+        #expect(!FileManager.default.fileExists(atPath: result.outputURL.path))
+        #expect(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    // Still opt-in: the CLI keeps §5.6's stricter promise.
+    @Test("Without the flag the run still fails and writes nothing")
+    func defaultStillRefuses() async throws {
+        let source = try fixture()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        await #expect(throws: PDFRedactor.Failure.self) {
+            try await PDFRedactor(maximumVerificationPasses: 1).redact(
+                documentAt: source,
+                matchers: matchers("social security numbers"),
+                inspectVisibleText: { _ in ["Knob LLC"] }
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: PDFRedactor.outputURL(for: source).path))
+    }
+
+    @Test("A clean document reports itself as verified")
+    func cleanDocumentIsVerified() async throws {
+        let source = try fixture()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let result = try await PDFRedactor(holdsUnverifiedOutputForReview: true)
+            .redact(documentAt: source, matchers: matchers("social security numbers"))
+
+        #expect(result.disposition == .written)
+        #expect(!result.isUnverified)
+        #expect(result.problems.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: result.outputURL.path))
+    }
+}

@@ -158,6 +158,25 @@ written to a temporary file, reopened, and re-scanned; only then does it move to
 name. A document where no rule matches produces **no file at all**, because a copy identical
 to the original is a privacy failure rather than a success (§3).
 
+### When a document cannot be proven clean
+
+Refusing to write anything — §5.6's literal reading — turned out to be unusable. On real
+documents the checker runs out of passes routinely: recognition misreads, and the model
+reports fragments of labels sitting beside the black boxes. The run then failed, nothing was
+written, and the user had no file and no way to see what the objection even was.
+
+So `holdsUnverifiedOutputForReview` (on in the app, off in the CLI) writes the copy under
+its normal `… redacted.pdf` name and reports
+`Result.Disposition.writtenUnverified(problems:)`. The duty §5.6 was protecting does not go
+away, it moves: the caller must say plainly that the file was not verified and put it in
+front of someone. The review window does that with a banner, the objections quoted in full,
+and a status bar driven from the same state — a green "came up clean" under a warning banner
+would be the worst message this app could show.
+
+Note the engine's objections are evidence, not verdicts. Several passes of "still legible"
+usually means the checker could not convince itself, not that the document is unsafe. That
+is exactly why the judgement belongs to the person who owns the document.
+
 ### The app layer
 
 `BlacklineUI` is a library, not part of the executable, so its views can be rendered
@@ -183,11 +202,19 @@ step (the model pass says so rather than spinning), the queue is sequential, and
 thorough where Apple Intelligence is unavailable and **says so in the result** — silently
 degrading would misrepresent what was checked.
 
-Snapshot tests render the real views and write PNGs to
-`$TMPDIR/blackline-ui-snapshots`. Two limits worth knowing: `ImageRenderer` does not lay out
-`ScrollView` or `LazyVStack` content, so rows are rendered on their own, and two concurrent
-renders deadlock — the rendering suites are `.serialized` so `swift test` works without
-`--no-parallel`.
+Snapshot tests render the real views and write PNGs to `$TMPDIR/blackline-ui-snapshots`,
+but **rendering is off unless asked for**:
+
+```sh
+BLACKLINE_SNAPSHOTS=1 swift test --no-parallel --filter UIRendering
+```
+
+`ImageRenderer` deadlocks under the test runner's parallel scheduler — the run hangs with no
+failure and no output, which costs far more than the images are worth. `.serialized` on the
+suites is not enough, because sibling suites still run concurrently. The assertions about
+what the UI *says* run on every `swift test`; producing the images is a deliberate act.
+`ImageRenderer` also does not lay out `ScrollView` or `LazyVStack` content, so rows are
+rendered on their own.
 
 ### Detection tiers
 

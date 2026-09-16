@@ -143,7 +143,13 @@ public final class RedactionJob: Identifiable {
             inspector = { text in try await proposer.residue(inVisibleText: text).map(\.text) }
         }
 
-        let redactor = PDFRedactor(verifiesByReading: depth.readsPagesBack)
+        // A document that cannot be proven clean is kept and shown rather than thrown
+        // away: the engine's check is not the last word, and discarding the work leaves
+        // nothing to look at and no way to see what the problem was.
+        let redactor = PDFRedactor(
+            verifiesByReading: depth.readsPagesBack,
+            holdsUnverifiedOutputForReview: true
+        )
         let source = sourceURL
 
         do {

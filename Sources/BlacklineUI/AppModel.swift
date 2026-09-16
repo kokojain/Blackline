@@ -30,7 +30,26 @@ public final class CompletedRun: Identifiable {
         self.unsupportedCategories = unsupportedCategories
     }
 
+    /// Where the file is. Always its real, redacted name — an unverified copy is still
+    /// written, because a run that produces nothing leaves the user with no way to see what
+    /// the objection was.
+    public var displayURL: URL { result.outputURL }
+
     public var name: String { result.outputURL.lastPathComponent }
+
+    public private(set) var wasDeleted = false
+
+    /// The copy exists but could not be proven clean, so it is on the owner to judge it.
+    public var isUnverified: Bool { result.isUnverified && !wasDeleted }
+
+    /// What could not be cleared, in the engine's words.
+    public var problems: [String] { result.problems }
+
+    /// Removes the copy. The original is untouched either way.
+    public func deleteCopy() {
+        PDFRedactor.deleteCopy(result)
+        wasDeleted = true
+    }
 
     /// Everything this run could not check, in the words the user needs. Surfaced beside the
     /// redaction count rather than below it: a clean-looking total over an unexamined page is
@@ -186,6 +205,17 @@ public final class AppModel {
 
     private func notify(_ run: CompletedRun) {
         let count = run.result.redactedItemCount
+
+        // Saved, but unverified. The notification must not let that read as a success.
+        guard !run.isUnverified else {
+            Notifier.post(
+                title: run.sourceURL.lastPathComponent,
+                body: "\(count) item\(count == 1 ? "" : "s") redacted — saved, but not verified. Review it before sending.",
+                reveal: run.result.outputURL
+            )
+            return
+        }
+
         var body = "\(count) item\(count == 1 ? "" : "s") redacted"
         if !run.result.unexaminedPages.isEmpty {
             let pages = run.result.unexaminedPages.map(String.init).joined(separator: ", ")

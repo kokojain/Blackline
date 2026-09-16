@@ -44,16 +44,35 @@ public struct PDFRedactor: Sendable {
     /// much less trustworthy.
     public let verifiesByReading: Bool
 
+    /// When a document cannot be proven clean, write it anyway and report what is wrong,
+    /// instead of failing the run.
+    ///
+    /// Spec §5.6 says the app never ships a PDF it cannot prove is clean, and with this off
+    /// that is exactly what happens — the run fails and nothing is written. In practice that
+    /// is too strict to be usable: "cannot prove" is not "is dirty". Recognition misreads,
+    /// the checker reports label fragments beside the black boxes, and a document that is
+    /// perfectly well redacted can run out of passes and be thrown away, leaving the user
+    /// with nothing to look at and no way to see what the objection was.
+    ///
+    /// With this on, the copy is written under its normal redacted name and the run reports
+    /// ``Result/Disposition/writtenUnverified(problems:)``. The caller is then responsible
+    /// for telling the user plainly that it was not verified and putting it in front of
+    /// them — a file that looks finished and was never checked is the failure §7 warns
+    /// about, and this flag moves that duty to the caller rather than removing it.
+    public let holdsUnverifiedOutputForReview: Bool
+
     public init(
         scale: CGFloat = 2.0,
         padding: CGFloat = 1.0,
         maximumVerificationPasses: Int = 3,
-        verifiesByReading: Bool = true
+        verifiesByReading: Bool = true,
+        holdsUnverifiedOutputForReview: Bool = false
     ) {
         self.scale = max(1.0, scale)
         self.padding = max(0, padding)
         self.maximumVerificationPasses = max(1, maximumVerificationPasses)
         self.verifiesByReading = verifiesByReading
+        self.holdsUnverifiedOutputForReview = holdsUnverifiedOutputForReview
     }
 
     /// Where the redactor has got to. Redaction with reading-back enabled takes seconds per
@@ -150,6 +169,29 @@ public struct PDFRedactor: Sendable {
         public let residueCaughtOnRecheck: [String]
         /// What happened to each page, in order.
         public let pages: [PageOutcome]
+        /// Whether this file is a finished redacted copy or something awaiting a decision.
+        public let disposition: Disposition
+        /// The name a saved copy takes. Always carries "redacted" (spec §3). Equal to
+        /// ``outputURL`` once the file has been written there.
+        public let proposedURL: URL
+
+        public enum Disposition: Equatable, Sendable {
+            /// Verified: every redacted page was read back and came up clean.
+            case written
+            /// Written, but not proven clean — these things were still readable when the
+            /// passes ran out. The file is real and usable; whether it is good enough is a
+            /// judgement only the person who owns the document can make.
+            case writtenUnverified(problems: [String])
+        }
+
+        /// `true` when the copy exists but could not be verified, so a person has to look.
+        public var isUnverified: Bool { disposition != .written }
+
+        /// What could not be cleared, in the engine's own words.
+        public var problems: [String] {
+            if case .writtenUnverified(let problems) = disposition { return problems }
+            return []
+        }
 
         /// Pages that carried no text to search and were copied through unexamined.
         public var unexaminedPages: [Int] {
@@ -223,6 +265,7 @@ public struct PDFRedactor: Sendable {
         var rulesApplied: Set<String> = []
         var worstPassCount = 1
         var residueCaught: [String] = []
+        var unresolved: [String] = []
         var outcomes: [PageOutcome] = []
 
         for index in 0 ..< document.pageCount {
@@ -324,6 +367,7 @@ public struct PDFRedactor: Sendable {
             let redactedHere = matches.count + doomedAnnotations.count + settled.extraRedactions
             totalRedactions += redactedHere
             residueCaught += settled.residue
+            unresolved += settled.unresolved
             worstPassCount = max(worstPassCount, settled.passes)
             pagesRasterized += 1
             outcomes.append(
@@ -346,15 +390,20 @@ public struct PDFRedactor: Sendable {
         let candidate = FileManager.default.temporaryDirectory
             .appendingPathComponent("blackline-\(UUID().uuidString).pdf")
         guard output.write(to: candidate) else { throw Failure.writeFailed }
-        defer { try? FileManager.default.removeItem(at: candidate) }
 
-        let residue = try verify(candidate, matchers: matchers)
-        guard residue.isEmpty else { throw Failure.verificationFailed(residue: residue) }
-
+        let problems = unresolved + (try verify(candidate, matchers: matchers))
         let destination = Self.outputURL(for: sourceURL)
+
+        // Nothing to report: the ordinary, verified path.
+        if !problems.isEmpty, !holdsUnverifiedOutputForReview {
+            try? FileManager.default.removeItem(at: candidate)
+            throw Failure.verificationFailed(residue: problems)
+        }
+
         do {
             try FileManager.default.moveItem(at: candidate, to: destination)
         } catch {
+            try? FileManager.default.removeItem(at: candidate)
             throw Failure.writeFailed
         }
 
@@ -366,7 +415,9 @@ public struct PDFRedactor: Sendable {
             rulesApplied: rulesApplied.sorted(),
             verificationPasses: worstPassCount,
             residueCaughtOnRecheck: residueCaught,
-            pages: outcomes.sorted { $0.index < $1.index }
+            pages: outcomes.sorted { $0.index < $1.index },
+            disposition: problems.isEmpty ? .written : .writtenUnverified(problems: problems),
+            proposedURL: destination
         )
     }
 
@@ -376,6 +427,9 @@ public struct PDFRedactor: Sendable {
         let page: PDFPage
         let passes: Int
         let residue: [String]
+        /// Still legible when the passes ran out. Non-empty means this page could not be
+        /// proven clean, whatever else happened to it.
+        let unresolved: [String]
         var extraRedactions: Int { residue.count }
     }
 
@@ -411,7 +465,7 @@ public struct PDFRedactor: Sendable {
                 guard let rendered = makePage(from: image, box: box, rotation: page.rotation) else {
                     throw Failure.renderFailed(page: pageNumber)
                 }
-                return SettledPage(page: rendered, passes: pass, residue: residue)
+                return SettledPage(page: rendered, passes: pass, residue: residue, unresolved: [])
             }
 
             progress?(.reading(page: pageNumber, pass: pass))
@@ -454,7 +508,7 @@ public struct PDFRedactor: Sendable {
                 guard let rendered = makePage(from: image, box: box, rotation: page.rotation) else {
                     throw Failure.renderFailed(page: pageNumber)
                 }
-                return SettledPage(page: rendered, passes: pass, residue: residue)
+                return SettledPage(page: rendered, passes: pass, residue: residue, unresolved: [])
             }
 
             progress?(.residueFound(page: pageNumber, pass: pass, items: newResidue))
@@ -463,8 +517,21 @@ public struct PDFRedactor: Sendable {
             pass += 1
 
             guard pass <= maximumVerificationPasses else {
-                throw Failure.verificationFailed(
-                    residue: newResidue.map { "page \(pageNumber): \($0) still legible after \(pass - 1) passes" }
+                let attempts = pass - 1
+                let problems = newResidue.map {
+                    "page \(pageNumber): “\($0)” still legible after \(attempts) pass\(attempts == 1 ? "" : "es")"
+                }
+                // Out of passes. Either abandon the document, or keep the best render and
+                // let the caller put it in front of someone — but never quietly treat this
+                // page as finished.
+                guard holdsUnverifiedOutputForReview else {
+                    throw Failure.verificationFailed(residue: problems)
+                }
+                guard let rendered = makePage(from: image, box: box, rotation: page.rotation) else {
+                    throw Failure.renderFailed(page: pageNumber)
+                }
+                return SettledPage(
+                    page: rendered, passes: pass - 1, residue: residue, unresolved: problems
                 )
             }
         }
@@ -667,21 +734,37 @@ public struct PDFRedactor: Sendable {
 
     // MARK: - Naming
 
+    /// Deletes a written copy. The original is never touched.
+    public static func deleteCopy(_ result: Result) {
+        try? FileManager.default.removeItem(at: result.outputURL)
+    }
+
     /// `statement.pdf` becomes `statement redacted.pdf` beside it, never overwriting
     /// anything: a name already in use gets a counter (spec §3).
     public static func outputURL(for source: URL) -> URL {
         let directory = source.deletingLastPathComponent()
         let stem = source.deletingPathExtension().lastPathComponent
         let ext = source.pathExtension.isEmpty ? "pdf" : source.pathExtension
+        return uniqueURL(
+            like: directory.appendingPathComponent("\(stem) redacted").appendingPathExtension(ext)
+        )
+    }
 
-        var candidate = directory.appendingPathComponent("\(stem) redacted").appendingPathExtension(ext)
+    /// The given name, or the next free counter after it. Never returns a path that exists.
+    static func uniqueURL(like wanted: URL) -> URL {
+        guard FileManager.default.fileExists(atPath: wanted.path) else { return wanted }
+
+        let directory = wanted.deletingLastPathComponent()
+        let stem = wanted.deletingPathExtension().lastPathComponent
+        let ext = wanted.pathExtension.isEmpty ? "pdf" : wanted.pathExtension
+
         var counter = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = directory
-                .appendingPathComponent("\(stem) redacted \(counter)")
+        while true {
+            let candidate = directory
+                .appendingPathComponent("\(stem) \(counter)")
                 .appendingPathExtension(ext)
+            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
             counter += 1
         }
-        return candidate
     }
 }

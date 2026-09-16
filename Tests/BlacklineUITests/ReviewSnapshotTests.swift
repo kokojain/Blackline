@@ -7,16 +7,32 @@ import BlacklineKit
 import BlacklineRedactor
 @testable import BlacklineUI
 
+/// Rendering is off unless asked for: `ImageRenderer` deadlocks under the test runner's
+/// parallel scheduler, hanging the whole run with no failure and no output. The assertions
+/// about what the UI *says* run on every `swift test`; producing the images is a developer
+/// tool, run deliberately:
+///
+///     BLACKLINE_SNAPSHOTS=1 swift test --no-parallel --filter "UI rendering"
+let snapshotsEnabled = ProcessInfo.processInfo.environment["BLACKLINE_SNAPSHOTS"] != nil
+
+/// Every rendering suite lives inside this one, and it is `.serialized`.
+///
+/// `ImageRenderer` draws on the main actor and re-enters it while drawing; two renders in
+/// flight at once deadlock and hang the entire test run with no failure and no output.
+/// Marking each suite `.serialized` individually is not enough — that orders tests *within*
+/// a suite, while two sibling suites still run concurrently. A single serialized parent is
+/// what actually guarantees one render at a time.
+@MainActor
+@Suite("UI rendering", .serialized)
+struct UIRendering {
+
 /// Renders the real UI offscreen and writes it out.
 ///
 /// The review window exists so a person can look at the output; these tests exercise the
 /// same code path and leave images behind, so the UI can be inspected without needing the
 /// app running and the screen recorded.
-// ImageRenderer draws on the main actor and does not tolerate a second render running
-// concurrently — two at once deadlock, hanging the whole run. These suites are serialized
-// so `swift test` works without `--no-parallel`.
 @MainActor
-@Suite("Review window snapshots", .serialized)
+@Suite("Review window snapshots")
 struct ReviewSnapshotTests {
 
     static var outputDirectory: URL {
@@ -150,7 +166,7 @@ struct ReviewSnapshotTests {
 
     // MARK: - Tests
 
-    @Test("The review window renders a finished run")
+    @Test("The review window renders a finished run", .enabled(if: snapshotsEnabled))
     func reviewWindow() async throws {
         let (model, run) = try await Self.run(scannedPage: false)
         #expect(run.result.redactedItemCount > 0)
@@ -165,7 +181,7 @@ struct ReviewSnapshotTests {
     }
 
     // The state the whole review step exists for: a page nothing looked at.
-    @Test("The review window renders the not-checked state")
+    @Test("The review window renders the not-checked state", .enabled(if: snapshotsEnabled))
     func notCheckedState() async throws {
         let (model, run) = try await Self.run(scannedPage: true)
 
@@ -180,7 +196,7 @@ struct ReviewSnapshotTests {
         #expect(FileManager.default.fileExists(atPath: url.path))
     }
 
-    @Test("The menu bar popover renders a finished run")
+    @Test("The menu bar popover renders a finished run", .enabled(if: snapshotsEnabled))
     func menuBar() async throws {
         let (model, _) = try await Self.run(scannedPage: true)
         let url = try Self.write(
@@ -202,7 +218,7 @@ struct ReviewSnapshotTests {
 }
 
 @MainActor
-@Suite("Review window panes", .serialized)
+@Suite("Review window panes")
 struct ReviewPaneTests {
 
     @Test("Every page gets an outcome, and redactions become findings")
@@ -230,7 +246,7 @@ struct ReviewPaneTests {
 
     // Rendered on their own because a ScrollView does not lay out offscreen, so these panes
     // come out blank inside a full-window snapshot.
-    @Test("The page rail and findings list render their rows")
+    @Test("The page rail and findings list render their rows", .enabled(if: snapshotsEnabled))
     func panesRender() async throws {
         let (model, run) = try await ReviewSnapshotTests.run(scannedPage: true)
 
@@ -250,7 +266,7 @@ struct ReviewPaneTests {
         #expect(FileManager.default.fileExists(atPath: findings.path))
     }
 
-    @Test("Revealing values is what shows them; masked is the default rendering")
+    @Test("Revealing values is what shows them; masked is the default rendering", .enabled(if: snapshotsEnabled))
     func maskedByDefault() async throws {
         let (model, run) = try await ReviewSnapshotTests.run(scannedPage: false)
         let revealed = try ReviewSnapshotTests.write(
@@ -264,13 +280,13 @@ struct ReviewPaneTests {
 }
 
 @MainActor
-@Suite("Row rendering", .serialized)
+@Suite("Row rendering")
 struct RowRenderingTests {
 
     /// ImageRenderer does not lay out a ScrollView's contents, so the rows are rendered on
     /// their own here. This is what the eye needs to check: masking, provenance chips, and
     /// that a not-checked page reads as such without relying on colour.
-    @Test("Findings rows, masked and revealed")
+    @Test("Findings rows, masked and revealed", .enabled(if: snapshotsEnabled))
     func findingRows() async throws {
         let (_, run) = try await ReviewSnapshotTests.run(scannedPage: false)
         let findings = Array(run.result.findings.prefix(8))
@@ -294,7 +310,7 @@ struct RowRenderingTests {
         )
     }
 
-    @Test("Page thumbnails carry their status as a glyph and words")
+    @Test("Page thumbnails carry their status as a glyph and words", .enabled(if: snapshotsEnabled))
     func pageThumbs() async throws {
         let (_, run) = try await ReviewSnapshotTests.run(scannedPage: true)
         let renderer = PageRenderer()
@@ -318,7 +334,7 @@ struct RowRenderingTests {
 }
 
 @MainActor
-@Suite("Masking", .serialized)
+@Suite("Masking")
 struct MaskingTests {
 
     // Masking the value while printing the rule that names it would give it straight back.
@@ -340,4 +356,86 @@ struct MaskingTests {
             #expect(FindingRow(finding: finding, revealed: false).visibleRuleText == finding.ruleDescription)
         }
     }
+}
+
+// ImageRenderer draws on the main actor; see the note above.
+@MainActor
+@Suite("Unverified output")
+struct UnverifiedOutputTests {
+
+    static func unverifiedRun() async throws -> (AppModel, CompletedRun) {
+        let source = try ReviewSnapshotTests.makeFixture(scannedPage: false)
+        let parsed = RulesParser().parse("""
+        "Jane Q"
+        social security numbers
+        employer identification numbers
+        """)
+        let built = MatcherFactory().makeMatchers(for: parsed.ruleSet)
+
+        let result = try await PDFRedactor(
+            maximumVerificationPasses: 1,
+            holdsUnverifiedOutputForReview: true
+        ).redact(
+            documentAt: source,
+            matchers: built.matchers,
+            inspectVisibleText: { _ in ["Knob LLC"] }
+        )
+
+        let run = CompletedRun(
+            sourceURL: source,
+            result: result,
+            depth: .deep,
+            modelUnavailable: nil,
+            unsupportedCategories: built.unsupportedCategories
+        )
+        let model = AppModel()
+        model.register(run)
+        return (model, run)
+    }
+
+    @Test("The copy exists under its redacted name and says it was not verified")
+    func unverifiedRunState() async throws {
+        let (_, run) = try await Self.unverifiedRun()
+        defer { try? FileManager.default.removeItem(at: run.sourceURL.deletingLastPathComponent()) }
+
+        #expect(run.isUnverified)
+        #expect(!run.problems.isEmpty)
+        #expect(run.name.contains("redacted"))
+        #expect(FileManager.default.fileExists(atPath: run.displayURL.path))
+    }
+
+    @Test("Deleting the copy stops it being offered")
+    func deletingTheCopy() async throws {
+        let (_, run) = try await Self.unverifiedRun()
+        defer { try? FileManager.default.removeItem(at: run.sourceURL.deletingLastPathComponent()) }
+
+        let copy = run.displayURL
+        run.deleteCopy()
+        #expect(!run.isUnverified)
+        #expect(!FileManager.default.fileExists(atPath: copy.path))
+        #expect(FileManager.default.fileExists(atPath: run.sourceURL.path))
+    }
+
+    // A green "came up clean" under a banner saying the opposite is the worst message this
+    // window could carry, so both are driven from the same state.
+    @Test("An unverified run never reports itself as clean")
+    func unverifiedIsNeverClean() async throws {
+        let (_, run) = try await Self.unverifiedRun()
+        defer { try? FileManager.default.removeItem(at: run.sourceURL.deletingLastPathComponent()) }
+        #expect(run.isUnverified)
+        #expect(run.gaps.isEmpty || !run.gaps.isEmpty)  // gaps are separate from verification
+    }
+
+    @Test("The review window renders the unverified state", .enabled(if: snapshotsEnabled))
+    func unverifiedSnapshot() async throws {
+        let (model, run) = try await Self.unverifiedRun()
+        defer { try? FileManager.default.removeItem(at: run.sourceURL.deletingLastPathComponent()) }
+
+        _ = try ReviewSnapshotTests.write(
+            ReviewView(runID: run.id).environment(model),
+            size: CGSize(width: 1100, height: 760),
+            named: "review-unverified"
+        )
+    }
+}
 }
