@@ -2,6 +2,7 @@ import Foundation
 import PDFKit
 import AppKit
 import BlacklineKit
+import BlacklineOCR
 
 /// Produces a redacted copy of a PDF (spec §5.4–5.6).
 ///
@@ -21,9 +22,13 @@ import BlacklineKit
 /// and form-field values are matched too, and a matching annotation is deleted before the
 /// page is drawn rather than merely covered.
 ///
-/// **Nothing is written unverified.** The candidate is written to a temporary file,
-/// reopened, and re-scanned with the same matchers. Only if nothing matches does it move to
-/// the final destination, per §5.6.
+/// **Nothing is written unverified, and verification reads the pixels.** After a page is
+/// rendered it is read back with Vision OCR — the only view that corresponds to what a
+/// person sees. Anything still legible is boxed and the page is rendered again, up to
+/// ``maximumVerificationPasses`` times; a page that will not come clean aborts the document.
+/// Checking the text layer alone is not enough, because rasterizing empties it whether or
+/// not the boxes landed correctly. The candidate file is then reopened and re-scanned
+/// before it is allowed to exist under its real name (§5.6).
 public struct PDFRedactor: Sendable {
 
     /// Raster resolution as a multiple of the PDF's 72 dpi user space. 2.0 ≈ 144 dpi.
@@ -32,10 +37,43 @@ public struct PDFRedactor: Sendable {
     /// are covered rather than fringed.
     public let padding: CGFloat
 
-    public init(scale: CGFloat = 2.0, padding: CGFloat = 1.0) {
+    /// How many times a page may be rendered, read back, and corrected before the document
+    /// is abandoned.
+    public let maximumVerificationPasses: Int
+    /// Whether rendered pages are read back with OCR. Off makes redaction much faster and
+    /// much less trustworthy.
+    public let verifiesByReading: Bool
+
+    public init(
+        scale: CGFloat = 2.0,
+        padding: CGFloat = 1.0,
+        maximumVerificationPasses: Int = 3,
+        verifiesByReading: Bool = true
+    ) {
         self.scale = max(1.0, scale)
         self.padding = max(0, padding)
+        self.maximumVerificationPasses = max(1, maximumVerificationPasses)
+        self.verifiesByReading = verifiesByReading
     }
+
+    /// Where the redactor has got to. Redaction with reading-back enabled takes seconds per
+    /// page, and minutes with a model in the loop, so callers need to be able to say so.
+    public enum Progress: Sendable {
+        case scanning(page: Int, of: Int)
+        case locating(page: Int)
+        case rendering(page: Int, pass: Int)
+        case reading(page: Int, pass: Int)
+        case consultingModel(page: Int, pass: Int)
+        case residueFound(page: Int, pass: Int, items: [String])
+        case pageSettled(page: Int, passes: Int)
+        case verifyingDocument
+    }
+
+    public typealias ProgressHandler = @Sendable (Progress) -> Void
+
+    /// Given the text visible on a rendered page, returns any spans that are still
+    /// sensitive. Supplied by the caller so the redactor need not know about the model.
+    public typealias VisibleTextInspector = @Sendable (String) async throws -> [String]
 
     public struct Result: Sendable {
         public let outputURL: URL
@@ -45,6 +83,10 @@ public struct PDFRedactor: Sendable {
         public let pageCount: Int
         /// Rules that accounted for the redactions, for the §7 "by which rules" report.
         public let rulesApplied: [String]
+        /// The most passes any single page needed before it read back clean.
+        public let verificationPasses: Int
+        /// Spans that survived the first render and were caught by reading the page back.
+        public let residueCaughtOnRecheck: [String]
     }
 
     public enum Failure: Error, LocalizedError {
@@ -84,14 +126,21 @@ public struct PDFRedactor: Sendable {
     /// Redacts `sourceURL` and returns where the copy landed.
     ///
     /// - Parameters:
-    ///   - matchers: run over page text, annotation values, and again during verification.
-    ///   - additionalMatches: already-located spans keyed by page index, for proposers that
-    ///     are not deterministic enough to re-run during verification (the model tier).
+    ///   - matchers: run over page text, annotation values, the text read back off each
+    ///     rendered page, and once more over the finished file.
+    ///   - additionalMatches: already-located spans keyed by page index, for proposers not
+    ///     deterministic enough to re-run during verification (the model tier).
+    ///   - inspectVisibleText: consulted with what is legible on each rendered page. This is
+    ///     what catches an identifier no matcher was written for — the failure that a second
+    ///     pass with the same rules cannot find by definition.
+    ///   - progress: called as work proceeds; reading pages back is slow enough to need it.
     public func redact(
         documentAt sourceURL: URL,
         matchers: [any Matcher],
-        additionalMatches: [Int: [Match]] = [:]
-    ) throws -> Result {
+        additionalMatches: [Int: [Match]] = [:],
+        inspectVisibleText: VisibleTextInspector? = nil,
+        progress: ProgressHandler? = nil
+    ) async throws -> Result {
         guard let document = PDFDocument(url: sourceURL) else { throw Failure.cannotOpen(sourceURL) }
         guard !document.isLocked else { throw Failure.encrypted }
 
@@ -99,9 +148,12 @@ public struct PDFRedactor: Sendable {
         var totalRedactions = 0
         var pagesRasterized = 0
         var rulesApplied: Set<String> = []
+        var worstPassCount = 1
+        var residueCaught: [String] = []
 
         for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index) else { continue }
+            progress?(.scanning(page: index + 1, of: document.pageCount))
 
             let pageText = page.string ?? ""
             var matches = matchers.flatMap { $0.matches(in: SourceText(pageText)) }
@@ -129,16 +181,37 @@ public struct PDFRedactor: Sendable {
 
             for match in matches { rulesApplied.insert(match.source.ruleDescription) }
 
-            var boxes = try redactionBoxes(for: matches, on: page, in: document, pageText: pageText)
+            // Read the page as drawn before deciding where anything goes. PDFKit's text
+            // geometry is not dependable enough to be the only source (see
+            // `redactionBoxes`), and recognition at a higher resolution than the output
+            // raster reads small print far more reliably.
+            var reading: PageReading?
+            if verifiesByReading,
+               let clean = renderImage(page: page, blackingOut: [], scale: Self.recognitionScale) {
+                progress?(.locating(page: index + 1))
+                reading = try? PageOCR().read(clean, pageBox: page.bounds(for: .mediaBox))
+            }
+
+            var boxes = try redactionBoxes(
+                for: matches, on: page, in: document, pageText: pageText, reading: reading
+            )
             boxes += doomedAnnotations.map { $0.bounds.insetBy(dx: -padding, dy: -padding) }
             for annotation in doomedAnnotations { page.removeAnnotation(annotation) }
 
-            guard let rendered = rasterize(page: page, blackingOut: boxes) else {
-                throw Failure.renderFailed(page: index + 1)
-            }
-            output.insert(rendered, at: output.pageCount)
+            let settled = try await settle(
+                page: page,
+                pageNumber: index + 1,
+                originalText: pageText,
+                boxes: boxes,
+                matchers: matchers,
+                inspectVisibleText: inspectVisibleText,
+                progress: progress
+            )
 
-            totalRedactions += matches.count + doomedAnnotations.count
+            output.insert(settled.page, at: output.pageCount)
+            totalRedactions += matches.count + doomedAnnotations.count + settled.extraRedactions
+            residueCaught += settled.residue
+            worstPassCount = max(worstPassCount, settled.passes)
             pagesRasterized += 1
         }
 
@@ -149,6 +222,7 @@ public struct PDFRedactor: Sendable {
 
         // Spec §5.6: write a candidate, prove it is clean, and only then let it exist under
         // the real name. A file that fails verification never reaches the output path.
+        progress?(.verifyingDocument)
         let candidate = FileManager.default.temporaryDirectory
             .appendingPathComponent("blackline-\(UUID().uuidString).pdf")
         guard output.write(to: candidate) else { throw Failure.writeFailed }
@@ -169,9 +243,114 @@ public struct PDFRedactor: Sendable {
             redactedItemCount: totalRedactions,
             pagesRasterized: pagesRasterized,
             pageCount: document.pageCount,
-            rulesApplied: rulesApplied.sorted()
+            rulesApplied: rulesApplied.sorted(),
+            verificationPasses: worstPassCount,
+            residueCaughtOnRecheck: residueCaught
         )
     }
+
+    // MARK: - Render, read back, correct, repeat
+
+    private struct SettledPage {
+        let page: PDFPage
+        let passes: Int
+        let residue: [String]
+        var extraRedactions: Int { residue.count }
+    }
+
+    /// Renders a page, reads back what is legible on it, and blacks out anything still
+    /// showing — repeating until a pass finds nothing new.
+    ///
+    /// This is the step that catches what the matchers never knew to look for. A second pass
+    /// using the same rules would re-derive the same answer; what makes this worth doing is
+    /// that the checker is different from the detector — Vision sees the rendered page, and
+    /// `inspectVisibleText` can bring judgement the rules do not have.
+    private func settle(
+        page: PDFPage,
+        pageNumber: Int,
+        originalText: String,
+        boxes initialBoxes: [CGRect],
+        matchers: [any Matcher],
+        inspectVisibleText: VisibleTextInspector?,
+        progress: ProgressHandler?
+    ) async throws -> SettledPage {
+        let box = page.bounds(for: .mediaBox)
+        var boxes = initialBoxes
+        var residue: [String] = []
+        var pass = 1
+
+        while true {
+            progress?(.rendering(page: pageNumber, pass: pass))
+            guard let image = renderImage(page: page, blackingOut: boxes) else {
+                throw Failure.renderFailed(page: pageNumber)
+            }
+
+            guard verifiesByReading else {
+                guard let rendered = makePage(from: image, box: box, rotation: page.rotation) else {
+                    throw Failure.renderFailed(page: pageNumber)
+                }
+                return SettledPage(page: rendered, passes: pass, residue: residue)
+            }
+
+            progress?(.reading(page: pageNumber, pass: pass))
+            let reading = try PageOCR().read(image, pageBox: box)
+
+            // What the rules can still see on the rendered page.
+            var stillVisible = matchers
+                .flatMap { $0.matches(in: SourceText(reading.text)) }
+                .map(\.matchedText)
+
+            // And what a reader would notice that no rule describes.
+            //
+            // Grounded against the original page: a span only counts if it genuinely
+            // appears in the document. OCR of a half-covered word returns fragments
+            // ("ificatil", "ETN 9") and an inspector will faithfully report them as
+            // findings; requiring the span to exist in the source discards those without
+            // having to guess which findings are real.
+            if let inspectVisibleText, !reading.isEmpty {
+                progress?(.consultingModel(page: pageNumber, pass: pass))
+                let source = SourceText.normalize(originalText).lowercased()
+                stillVisible += try await inspectVisibleText(reading.text)
+                    .filter { source.contains(SourceText.normalize($0).lowercased()) }
+            }
+
+            // Only act on spans that can actually be located on the page.
+            var newBoxes: [CGRect] = []
+            var newResidue: [String] = []
+            for span in stillVisible {
+                let found = reading.boxes(covering: span)
+                    .map { $0.insetBy(dx: -padding, dy: -padding) }
+                    .filter { candidate in !boxes.contains { $0.contains(candidate) } }
+                if !found.isEmpty {
+                    newBoxes += found
+                    newResidue.append(span)
+                }
+            }
+
+            if newBoxes.isEmpty {
+                progress?(.pageSettled(page: pageNumber, passes: pass))
+                guard let rendered = makePage(from: image, box: box, rotation: page.rotation) else {
+                    throw Failure.renderFailed(page: pageNumber)
+                }
+                return SettledPage(page: rendered, passes: pass, residue: residue)
+            }
+
+            progress?(.residueFound(page: pageNumber, pass: pass, items: newResidue))
+            residue += newResidue
+            boxes += newBoxes
+            pass += 1
+
+            guard pass <= maximumVerificationPasses else {
+                throw Failure.verificationFailed(
+                    residue: newResidue.map { "page \(pageNumber): \($0) still legible after \(pass - 1) passes" }
+                )
+            }
+        }
+    }
+
+    /// Pages are recognized at this scale regardless of output resolution; Vision misreads
+    /// small print rendered at the default raster scale.
+    static let recognitionScale: CGFloat = 4.0
 
     // MARK: - Locating
 
@@ -189,7 +368,8 @@ public struct PDFRedactor: Sendable {
         for matches: [Match],
         on page: PDFPage,
         in document: PDFDocument,
-        pageText: String
+        pageText: String,
+        reading: PageReading?
     ) throws -> [CGRect] {
         var boxes: [CGRect] = []
 
@@ -215,11 +395,28 @@ public struct PDFRedactor: Sendable {
 
             // A match that wraps gets one box per line, rather than one rectangle spanning
             // the gap between them and blacking out unrelated text.
+            var fromPDFKit: [CGRect] = []
             for line in selection.selectionsByLine() {
                 let bounds = line.bounds(for: page)
                 guard !bounds.isNull, !bounds.isEmpty else { continue }
                 let tightened = tightenVertically(bounds, on: page, indices: lower ..< upper)
-                boxes.append(tightened.insetBy(dx: -padding, dy: -padding))
+                fromPDFKit.append(tightened.insetBy(dx: -padding, dy: -padding))
+            }
+
+            // Where recognition located the text, believe it: its boxes come from the ink on
+            // the page and cannot drift from it. PDFKit's are then kept only where the two
+            // agree, which discards the pathological ones without discarding the useful
+            // extra coverage when they line up.
+            let fromReading = (reading?.boxes(covering: match.matchedText) ?? [])
+                .map { $0.insetBy(dx: -padding, dy: -padding) }
+
+            if fromReading.isEmpty {
+                boxes += fromPDFKit
+            } else {
+                boxes += fromReading
+                boxes += fromPDFKit.filter { candidate in
+                    fromReading.contains { $0.intersects(candidate) }
+                }
             }
         }
 
@@ -267,13 +464,14 @@ public struct PDFRedactor: Sendable {
 
     // MARK: - Rendering
 
-    /// Renders a page to an image with `boxes` filled black, and wraps it as a new page.
-    func rasterize(page: PDFPage, blackingOut boxes: [CGRect]) -> PDFPage? {
+    /// Renders a page to an image with `boxes` filled black.
+    func renderImage(page: PDFPage, blackingOut boxes: [CGRect], scale: CGFloat? = nil) -> CGImage? {
+        let scale = scale ?? self.scale
         let box = page.bounds(for: .mediaBox)
         guard box.width > 0, box.height > 0 else { return nil }
 
-        // Draw unrotated so that character bounds — which are in page space — line up with
-        // what is drawn. The rotation is put back on the replacement page afterwards.
+        // Draw unrotated so that the boxes — which are in page space — line up with what is
+        // drawn. The rotation is put back on the replacement page afterwards.
         let rotation = page.rotation
         page.rotation = 0
         defer { page.rotation = rotation }
@@ -302,11 +500,15 @@ public struct PDFRedactor: Sendable {
         context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
         for rect in boxes { context.fill(rect) }
 
-        guard let image = context.makeImage() else { return nil }
-        let redacted = PDFPage(image: NSImage(cgImage: image, size: box.size))
-        redacted?.setBounds(box, for: .mediaBox)
-        redacted?.rotation = rotation
-        return redacted
+        return context.makeImage()
+    }
+
+    /// Wraps a rendered image as a page of the original's size and orientation.
+    func makePage(from image: CGImage, box: CGRect, rotation: Int) -> PDFPage? {
+        let page = PDFPage(image: NSImage(cgImage: image, size: box.size))
+        page?.setBounds(box, for: .mediaBox)
+        page?.rotation = rotation
+        return page
     }
 
     // MARK: - Verifying

@@ -85,3 +85,32 @@ public enum TextChunker {
         return chunks
     }
 }
+
+/// Rejects the two things a checker reliably gets wrong when inspecting a page that has
+/// already been redacted.
+///
+/// Asked what is still visible, a model reports the field labels sitting beside the black
+/// boxes — "Name:", "Account number:" — and the fragments of half-covered words that OCR
+/// returns as garbage. Acting on either blacks out more of the page each pass until nothing
+/// is left. Neither is information that survived redaction.
+///
+/// The filter stays deliberately loose. A phrase like "Employer ID n" — a label a black box
+/// cut through — still passes, and the result is a label getting covered as well. Tightening
+/// the rule to catch it means rejecting anything ending in a one- or two-letter word, which
+/// also rejects "Jane Q": a real name the checker is right about. Spec §7 makes that trade
+/// one-sided, so the filter errs toward covering too much.
+public enum ResidueFilter {
+    public static func looksLikeAValue(_ candidate: String) -> Bool {
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 4 else { return false }
+        // A label announces a field; the value begins after it.
+        guard !trimmed.hasSuffix(":") else { return false }
+        guard trimmed.contains(where: { $0.isLetter || $0.isNumber }) else { return false }
+
+        let words = trimmed.split(whereSeparator: \.isWhitespace)
+        let hasDigits = trimmed.contains(where: \.isNumber)
+        // A single short run of letters is almost always a word clipped by a black box.
+        if words.count == 1, !hasDigits, trimmed.count < 6 { return false }
+        return true
+    }
+}

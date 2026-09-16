@@ -1,4 +1,5 @@
 import Foundation
+import os
 import PDFKit
 import CoreText
 import AppKit
@@ -8,6 +9,11 @@ import BlacklineKit
 
 @Suite("PDFRedactor")
 struct PDFRedactorTests {
+
+    /// Reading pages back costs about a second each; most of these tests are about what the
+    /// redactor produces, not about verification, so they skip it. The loop has its own
+    /// tests below.
+    static let quick = PDFRedactor(verifiesByReading: false)
 
     // MARK: - Helpers
 
@@ -83,7 +89,7 @@ struct PDFRedactorTests {
     // MARK: - End to end
 
     @Test("Removes matched text from the output entirely")
-    func removesMatchedText() throws {
+    func removesMatchedText() async throws {
         let source = try Self.makePDF(lines: [
             "Your social security number: 123-45-6789",
             "Account number: 000123456789",
@@ -95,7 +101,7 @@ struct PDFRedactorTests {
             for: RulesParser().parse("social security numbers\naccount numbers").ruleSet
         ).matchers
 
-        let result = try PDFRedactor().redact(documentAt: source, matchers: matchers)
+        let result = try await Self.quick.redact(documentAt: source, matchers: matchers)
         #expect(result.redactedItemCount == 2)
         #expect(result.pagesRasterized == 1)
         #expect(FileManager.default.fileExists(atPath: result.outputURL.path))
@@ -111,7 +117,7 @@ struct PDFRedactorTests {
     }
 
     @Test("Leaves the original untouched, per spec §2")
-    func originalIsUntouched() throws {
+    func originalIsUntouched() async throws {
         let source = try Self.makePDF(lines: ["Your social security number: 123-45-6789"])
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
         let before = try Data(contentsOf: source)
@@ -119,7 +125,7 @@ struct PDFRedactorTests {
         let matchers = MatcherFactory().makeMatchers(
             for: RulesParser().parse("social security numbers").ruleSet
         ).matchers
-        _ = try PDFRedactor().redact(documentAt: source, matchers: matchers)
+        _ = try await Self.quick.redact(documentAt: source, matchers: matchers)
 
         #expect(try Data(contentsOf: source) == before)
         #expect(Self.text(of: source).contains("123-45-6789"))
@@ -127,7 +133,7 @@ struct PDFRedactorTests {
 
     // Spec §3: a copy identical to the original is a privacy failure, not a success.
     @Test("Writes nothing when no rule matches")
-    func refusesEmptyRedaction() throws {
+    func refusesEmptyRedaction() async throws {
         let source = try Self.makePDF(lines: ["Nothing sensitive on this page."])
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
 
@@ -135,14 +141,14 @@ struct PDFRedactorTests {
             for: RulesParser().parse("social security numbers").ruleSet
         ).matchers
 
-        #expect(throws: PDFRedactor.Failure.self) {
-            try PDFRedactor().redact(documentAt: source, matchers: matchers)
+        await #expect(throws: PDFRedactor.Failure.self) {
+            try await Self.quick.redact(documentAt: source, matchers: matchers)
         }
         #expect(!FileManager.default.fileExists(atPath: PDFRedactor.outputURL(for: source).path))
     }
 
     @Test("Pages with no matches keep their selectable text")
-    func untouchedPagesAreNotRasterized() throws {
+    func untouchedPagesAreNotRasterized() async throws {
         let source = try Self.makePDF(lines: ["Your social security number: 123-45-6789"])
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
 
@@ -156,7 +162,7 @@ struct PDFRedactorTests {
         let matchers = MatcherFactory().makeMatchers(
             for: RulesParser().parse("social security numbers").ruleSet
         ).matchers
-        let result = try PDFRedactor().redact(documentAt: twoPage, matchers: matchers)
+        let result = try await Self.quick.redact(documentAt: twoPage, matchers: matchers)
 
         #expect(result.pageCount == 2)
         #expect(result.pagesRasterized == 1)
@@ -165,7 +171,7 @@ struct PDFRedactorTests {
     }
 
     @Test("Document metadata does not carry over, per spec §5.5")
-    func metadataIsScrubbed() throws {
+    func metadataIsScrubbed() async throws {
         let source = try Self.makePDF(lines: ["Your social security number: 123-45-6789"])
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
 
@@ -179,7 +185,7 @@ struct PDFRedactorTests {
         let matchers = MatcherFactory().makeMatchers(
             for: RulesParser().parse("social security numbers").ruleSet
         ).matchers
-        let result = try PDFRedactor().redact(documentAt: tagged, matchers: matchers)
+        let result = try await Self.quick.redact(documentAt: tagged, matchers: matchers)
 
         let attributes = PDFDocument(url: result.outputURL)?.documentAttributes ?? [:]
         #expect(attributes[PDFDocumentAttribute.authorAttribute] == nil)
@@ -190,7 +196,7 @@ struct PDFRedactorTests {
     }
 
     @Test("Reports which rules accounted for the redactions, per spec §7")
-    func reportsRules() throws {
+    func reportsRules() async throws {
         let source = try Self.makePDF(lines: [
             "SSN 123-45-6789 for Knob LLC",
         ])
@@ -199,10 +205,146 @@ struct PDFRedactorTests {
         let matchers = MatcherFactory().makeMatchers(
             for: RulesParser().parse("social security numbers\n\"Knob LLC\"").ruleSet
         ).matchers
-        let result = try PDFRedactor().redact(documentAt: source, matchers: matchers)
+        let result = try await Self.quick.redact(documentAt: source, matchers: matchers)
 
         #expect(result.redactedItemCount == 2)
         #expect(result.rulesApplied.contains("social security numbers"))
         #expect(result.rulesApplied.contains { $0.contains("Knob LLC") })
+    }
+}
+
+@Suite("PDFRedactor read-back loop")
+struct PDFRedactorVerificationTests {
+
+    private func matchers(_ rules: String) -> [any Matcher] {
+        MatcherFactory().makeMatchers(for: RulesParser().parse(rules).ruleSet).matchers
+    }
+
+    // The behaviour asked for: check the rendered page, and if something sensitive is still
+    // showing, black it out and render again.
+    @Test("Residue found on the rendered page triggers another pass")
+    func residueTriggersAnotherPass() async throws {
+        let source = try PDFRedactorTests.makePDF(lines: [
+            "Your social security number: 123-45-6789",
+            "Employer: Knob LLC",
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        // Stands in for the model: reports something real the first time it is asked, then
+        // agrees the page is clean.
+        let asked = OSAllocatedUnfairLock(initialState: 0)
+        let inspector: PDFRedactor.VisibleTextInspector = { _ in
+            asked.withLock { count in
+                count += 1
+                return count == 1 ? ["Knob LLC"] : []
+            }
+        }
+
+        let result = try await PDFRedactor().redact(
+            documentAt: source,
+            matchers: matchers("social security numbers"),
+            inspectVisibleText: inspector
+        )
+
+        #expect(result.verificationPasses == 2)
+        #expect(result.residueCaughtOnRecheck.contains("Knob LLC"))
+        #expect(asked.withLock { $0 } >= 2)
+    }
+
+    // Without this the checker chases OCR fragments of half-covered words and never settles.
+    @Test("Residue that is not in the document is ignored")
+    func ungroundedResidueIsIgnored() async throws {
+        let source = try PDFRedactorTests.makePDF(lines: [
+            "Your social security number: 123-45-6789",
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let inspector: PDFRedactor.VisibleTextInspector = { _ in ["ificatil", "ETN 9"] }
+
+        let result = try await PDFRedactor().redact(
+            documentAt: source,
+            matchers: matchers("social security numbers"),
+            inspectVisibleText: inspector
+        )
+
+        #expect(result.verificationPasses == 1)
+        #expect(result.residueCaughtOnRecheck.isEmpty)
+    }
+
+    // Spec §5.6: a page still showing something after the last allowed pass produces no file
+    // at all, rather than one the user has to check by hand.
+    @Test("A page still dirty when the passes run out aborts the document")
+    func unsettleablePageAborts() async throws {
+        let source = try PDFRedactorTests.makePDF(lines: [
+            "Your social security number: 123-45-6789",
+            "Employer: Knob LLC",
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let inspector: PDFRedactor.VisibleTextInspector = { _ in ["Knob LLC"] }
+
+        // One pass allowed, and that pass finds something: there is no budget to fix it.
+        await #expect(throws: PDFRedactor.Failure.self) {
+            try await PDFRedactor(maximumVerificationPasses: 1).redact(
+                documentAt: source,
+                matchers: matchers("social security numbers"),
+                inspectVisibleText: inspector
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: PDFRedactor.outputURL(for: source).path))
+    }
+
+    // Covered text cannot be read again, which is what makes the loop terminate rather than
+    // chase the same finding forever.
+    @Test("A finding that gets covered does not reappear on the next pass")
+    func loopConverges() async throws {
+        let source = try PDFRedactorTests.makePDF(lines: [
+            "Your social security number: 123-45-6789",
+            "Employer: Knob LLC",
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        // Asks for the same span on every pass; it should be satisfied once it is covered.
+        let inspector: PDFRedactor.VisibleTextInspector = { _ in ["Knob LLC"] }
+
+        let result = try await PDFRedactor(maximumVerificationPasses: 4).redact(
+            documentAt: source,
+            matchers: matchers("social security numbers"),
+            inspectVisibleText: inspector
+        )
+        #expect(result.verificationPasses == 2)
+    }
+
+    @Test("Progress is reported for each stage")
+    func reportsProgress() async throws {
+        let source = try PDFRedactorTests.makePDF(lines: ["SSN 123-45-6789"])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let seen = OSAllocatedUnfairLock(initialState: [String]())
+        _ = try await PDFRedactor().redact(
+            documentAt: source,
+            matchers: matchers("social security numbers"),
+            progress: { step in
+                seen.withLock { log in
+                    switch step {
+                    case .scanning: log.append("scanning")
+                    case .locating: log.append("locating")
+                    case .rendering: log.append("rendering")
+                    case .reading: log.append("reading")
+                    case .consultingModel: log.append("model")
+                    case .residueFound: log.append("residue")
+                    case .pageSettled: log.append("settled")
+                    case .verifyingDocument: log.append("verifying")
+                    }
+                }
+            }
+        )
+
+        let log = seen.withLock { $0 }
+        #expect(log.contains("scanning"))
+        #expect(log.contains("rendering"))
+        #expect(log.contains("reading"))
+        #expect(log.contains("settled"))
+        #expect(log.contains("verifying"))
     }
 }

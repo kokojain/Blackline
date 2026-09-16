@@ -12,7 +12,8 @@ let package = Package(
     targets: [
         .target(name: "BlacklineKit"),
         .target(name: "BlacklineIntelligence", dependencies: ["BlacklineKit"]),
-        .target(name: "BlacklineRedactor", dependencies: ["BlacklineKit"]),
+        .target(name: "BlacklineOCR"),
+        .target(name: "BlacklineRedactor", dependencies: ["BlacklineKit", "BlacklineOCR"]),
         .executableTarget(
             name: "BlacklinePreview",
             dependencies: ["BlacklineKit", "BlacklineIntelligence"]
@@ -22,6 +23,7 @@ let package = Package(
             dependencies: ["BlacklineKit", "BlacklineIntelligence", "BlacklineRedactor"]
         ),
         .testTarget(name: "BlacklineKitTests", dependencies: ["BlacklineKit"]),
+        .testTarget(name: "BlacklineOCRTests", dependencies: ["BlacklineOCR"]),
         .testTarget(
             name: "BlacklineRedactorTests",
             dependencies: ["BlacklineRedactor", "BlacklineKit"]

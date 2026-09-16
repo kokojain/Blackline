@@ -75,3 +75,38 @@ struct ProposalPlumbingTests {
         #expect(located.first?.matches.first?.matchedText == "123 Har-\nbor View Drive")
     }
 }
+
+@Suite("ResidueFilter")
+struct ResidueFilterTests {
+
+    // Asked what is still visible on a redacted page, a checker reports the labels beside
+    // the black boxes. Acting on those blacks out the page a line at a time.
+    @Test("Rejects field labels", arguments: [
+        "Name:", "Account number:", "SSN:",
+    ])
+    func rejectsLabels(_ candidate: String) {
+        #expect(!ResidueFilter.looksLikeAValue(candidate))
+    }
+
+    // OCR of a word clipped by a black box comes back as garbage, at full confidence.
+    @Test("Rejects clipped fragments", arguments: ["Emplo", "ifica", "ETN", "x", ""])
+    func rejectsFragments(_ candidate: String) {
+        #expect(!ResidueFilter.looksLikeAValue(candidate))
+    }
+
+    // Deliberately loose: a label the box cut through still passes, so a label gets covered
+    // too. Tightening this to reject it would also reject "Jane Q", which is a real name.
+    @Test("Lets a truncated label through rather than risk dropping a short name")
+    func prefersOverCoverage() {
+        #expect(ResidueFilter.looksLikeAValue("Employer ID n"))
+        #expect(ResidueFilter.looksLikeAValue("Jane Q"))
+    }
+
+    @Test("Keeps values that genuinely identify someone", arguments: [
+        "12-3456789", "123-45-6789", "Jane Q Taxpayer", "123 Harbor View Drive",
+        "Knob LLC", "Portland, ME 04101", "000123456789",
+    ])
+    func keepsValues(_ candidate: String) {
+        #expect(ResidueFilter.looksLikeAValue(candidate))
+    }
+}

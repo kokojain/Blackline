@@ -145,14 +145,72 @@ let unreadablePages = (0 ..< document.pageCount).compactMap { index -> Int? in
     return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? index + 1 : nil
 }
 
+// MARK: - Progress reporting
+
+// Reading each page back takes a second or two, and consulting the model takes several, so
+// the work has to be visible. On a terminal the transient steps overwrite one another; when
+// output is piped they become ordinary lines so nothing is lost in a log.
+let isTerminal = isatty(FileHandle.standardOutput.fileDescriptor) == 1
+
+@Sendable func status(_ line: String) {
+    if isTerminal {
+        print("\u{1B}[2K\r   \(line)", terminator: "")
+        fflush(stdout)
+    } else {
+        print("   \(line)")
+    }
+}
+
+@Sendable func settled(_ line: String) {
+    if isTerminal {
+        print("\u{1B}[2K\r   \(line)")
+    } else {
+        print("   \(line)")
+    }
+}
+
+let progress: PDFRedactor.ProgressHandler = { step in
+    switch step {
+    case .scanning(let page, let total):
+        print("Page \(page) of \(total)")
+    case .locating:
+        status("locating the matched text on the rendered page")
+    case .rendering(_, let pass):
+        status("pass \(pass) · rendering")
+    case .reading(_, let pass):
+        status("pass \(pass) · reading the rendered page back")
+    case .consultingModel(_, let pass):
+        status("pass \(pass) · asking the on-device model what is still visible…")
+    case .residueFound(_, let pass, let items):
+        settled("pass \(pass) · STILL VISIBLE: \(items.map { "“\($0)”" }.joined(separator: ", "))")
+        status("pass \(pass) · blacking those out and rendering again")
+    case .pageSettled(_, let passes):
+        settled("clean after \(passes) pass\(passes == 1 ? "" : "es")")
+    case .verifyingDocument:
+        print("Verifying the finished document…")
+    }
+}
+
+// What the model is asked on each re-read. Distinct from first-pass detection: this one
+// looks at a page that has already been redacted and reports what survived.
+var inspector: PDFRedactor.VisibleTextInspector?
+if options.useModel, #available(macOS 26.0, *) {
+    let proposer = ModelProposer()
+    inspector = { visibleText in
+        try await proposer.residue(inVisibleText: visibleText).map(\.text)
+    }
+}
+
 // MARK: - Redact
 
 do {
     let redactor = PDFRedactor(scale: options.scale)
-    let result = try redactor.redact(
+    let result = try await redactor.redact(
         documentAt: sourceURL,
         matchers: built.matchers,
-        additionalMatches: additionalMatches
+        additionalMatches: additionalMatches,
+        inspectVisibleText: inspector,
+        progress: progress
     )
 
     print("")
@@ -160,7 +218,14 @@ do {
     print("  Written   \(result.outputURL.path)")
     print("  Rules     \(result.rulesApplied.joined(separator: ", "))")
     print("  Pages     \(result.pagesRasterized) of \(result.pageCount) rasterized (their text is no longer selectable)")
-    print("  Verified  reopened and re-scanned; no rule matched the output")
+    print("  Passes    up to \(result.verificationPasses) render-and-read-back pass\(result.verificationPasses == 1 ? "" : "es") per page")
+    if result.residueCaughtOnRecheck.isEmpty {
+        print("  Verified  every page read back clean on the first render")
+    } else {
+        let caught = Set(result.residueCaughtOnRecheck).sorted()
+        print("  Caught    \(caught.count) item\(caught.count == 1 ? "" : "s") the first pass missed, found by reading the page back:")
+        for item in caught { print("              “\(item)”") }
+    }
 
     var warnings: [String] = []
     if !built.unsupportedCategories.isEmpty {

@@ -32,6 +32,12 @@ public struct MatcherFactory: Sendable {
                 matchers.append(SSNMatcher())
             case .creditCardNumbers:
                 matchers.append(CreditCardMatcher())
+            case .employerIdentificationNumbers:
+                matchers.append(EINMatcher())
+            case .passportNumbers:
+                matchers.append(PassportNumberMatcher())
+            case .driversLicenseNumbers:
+                matchers.append(DriversLicenseMatcher())
             case .accountNumbers:
                 matchers.append(
                     AccountNumberMatcher(includeUnlabeledDigitRuns: includeUnlabeledDigitRuns)

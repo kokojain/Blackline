@@ -48,6 +48,7 @@ blackline-spec.md          the product spec; sections are cited throughout the c
 Package.swift              BlacklineKit, swift-tools-version 6.0, macOS 14+
 Sources/BlacklineKit/      the redaction engine (library only — no UI, no PDFKit)
 Sources/BlacklineIntelligence/  on-device model tier (FoundationModels, macOS 26+)
+Sources/BlacklineOCR/      Vision text recognition; page geometry read from pixels
 Sources/BlacklineRedactor/ PDF rendering, redaction, and verification (PDFKit)
 Sources/BlacklinePreview/  blackline-preview, a read-only CLI (this one does use PDFKit)
 Sources/BlacklineRedactCLI/ blackline-redact, writes the redacted copy
@@ -87,19 +88,60 @@ matches are copied through untouched and keep their text.
 Content-stream surgery is deferred rather than half-built. A surgical path that works on
 most encodings is exactly the false negative §7 warns about.
 
-**Box geometry comes from `PDFSelection`, never `characterBounds(at:)`.** The latter
-returns degenerate rectangles on real documents — zero-height boxes at the wrong baseline —
-which puts black boxes beside the text instead of on it. `characterBounds` is used only to
-*narrow* a box vertically, and only when every glyph resolves onto a single row; otherwise
-the wider line box stands. Too tall covers a neighbouring line; too short leaves the value
-readable.
+**Box geometry comes from the rendered pixels, not from PDFKit.** This is the hardest-won
+rule in the codebase. Neither PDFKit text API can be trusted on its own:
+
+- `characterBounds(at:)` returns degenerate rectangles on real documents — zero-height boxes
+  at the wrong baseline, one character reporting the next line's x.
+- `selection.bounds(for:)` is no better where PDFKit merges two visual rows into one "line".
+  Measured on one file: a selection reporting x=167.8…311.8 for text actually drawn at
+  x=254…320 — a box 86pt to the left that stops before the last digit of an EIN.
+
+So each page is rendered clean and read with Vision *before* any box is placed, and the
+recognized word boxes are the primary source; PDFKit's are kept only where the two agree.
+Recognition runs at `recognitionScale` (4×), independent of output resolution, because
+Vision misreads small print at the default raster scale.
+
+Recognition is not reliable either — it returns `12-3456789` as `12-3456/89` at confidence
+1.00, so neither an exact search nor a confidence threshold finds it. `PageReading` therefore
+falls back to approximate location, with tolerance scaling by length, and widens an
+approximate box by one character because its extent is approximate too. That last detail is
+load-bearing: without it the final digit of an identifier stays visible.
 
 **Text-extraction verification is necessary but not sufficient.** This is the trap worth
 remembering: rasterizing deletes the text layer whether or not the boxes landed correctly,
 so §5.6's re-scan passes trivially on a page with a visible, unredacted SSN. It was caught
-happening. The real guard is in `redactionBoxes`, which requires the text PDFKit resolves at
-a span's indices to equal the text the matcher found, and aborts the whole document if not.
-Do not remove that check on the grounds that verification already covers it.
+happening — twice. The guards that actually work are the span check in `redactionBoxes`
+(the text PDFKit resolves at a span's indices must equal the text the matcher found) and the
+read-back loop below. Note the span check validates the *index mapping*, not the *bounds* —
+it passed on the misplaced boxes described above.
+
+### The read-back loop
+
+`PDFRedactor.settle(page:…)` renders a page, reads it back with Vision, and blacks out
+anything still legible, repeating until a pass finds nothing new. A page that is still dirty
+after `maximumVerificationPasses` aborts the whole document rather than producing a file
+someone has to check by hand.
+
+What makes this worth doing is that **the checker differs from the detector**. Re-running the
+same matchers finds the same answer by definition; the point is that Vision sees the page as
+drawn, and `inspectVisibleText` can bring judgement no rule encodes. That closure is how the
+model participates without `BlacklineRedactor` knowing FoundationModels exists.
+
+Two properties keep the loop honest:
+
+- **It terminates on its own.** Covered text cannot be read again, so a finding that gets
+  blacked out does not come back.
+- **Findings are grounded in the source.** A reported span only counts if it genuinely
+  appears in the original page text. Recognition of a half-covered word returns fragments
+  ("ificatil", "ETN 9") and a checker faithfully reports them; grounding discards those
+  without having to guess which findings are real.
+
+Asked the general "find personal information" question, a model looking at an already
+redacted page reports the field labels beside the black boxes and then the form's own title,
+and the page goes black. `ModelProposer.residue(inVisibleText:)` asks a different question
+with explicit negative examples, and `ResidueFilter` drops the obvious garbage. Both matter;
+neither alone was enough.
 
 Output is `<name> redacted.pdf` beside the original, with a counter on collision — the
 original is never modified and nothing is ever overwritten (§2, §3). The candidate is

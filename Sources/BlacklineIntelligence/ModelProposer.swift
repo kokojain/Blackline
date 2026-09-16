@@ -104,6 +104,34 @@ public struct ModelProposer: Sendable {
         return ordered
     }
 
+    /// Asks what personal information is *still legible* on a page that has already been
+    /// redacted.
+    ///
+    /// A different question from ``proposals(forPage:)``, and it needs different
+    /// instructions. Asked the general question, a model looking at a redacted page starts
+    /// reporting the field labels beside the black boxes — "Name:", "Account number:" — and
+    /// then the form's own title, and the page gets blacked out entirely. What is wanted
+    /// here is only surviving *values*.
+    public func residue(inVisibleText text: String) async throws -> [Proposal] {
+        var seen: Set<String> = []
+        var ordered: [Proposal] = []
+
+        for chunk in TextChunker.chunks(of: text, maxLength: chunkSize) {
+            let session = LanguageModelSession(instructions: Self.residueInstructions)
+            let response = try await session.respond(
+                to: Self.residuePrompt(for: chunk),
+                generating: FoundPersonalInformation.self,
+                options: GenerationOptions(sampling: .greedy)
+            )
+            for item in response.content.items {
+                let candidate = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard ResidueFilter.looksLikeAValue(candidate), seen.insert(candidate).inserted else { continue }
+                ordered.append(Proposal(text: candidate, kind: item.kind, reason: item.reason))
+            }
+        }
+        return ordered
+    }
+
     // MARK: - Prompting
 
     private static let instructions = """
@@ -126,6 +154,37 @@ public struct ModelProposer: Sendable {
         When you are unsure whether something identifies a person, include it. A missed \
         identifier is far worse than an extra one.
         """
+
+    private static let residueInstructions = """
+        You are checking a page of a document that has ALREADY been redacted. Black boxes \
+        cover the information that was removed. Your job is to report anything sensitive \
+        that is still readable, so it can be covered too.
+
+        Report only surviving VALUES that identify a specific person or organization: a \
+        person's name, a company name, a street address, an identification number, an \
+        account or card number, a date of birth, a phone number, an email address.
+
+        Do NOT report any of the following, which are not sensitive and must be left alone:
+        - Field labels and captions, such as "Name:", "Account number:", "Employer ID".
+        - The form's title, headings, section numbers, or printed instructions.
+        - Partial or garbled words, which are text clipped by a black box rather than \
+          information that survived.
+
+        Copy anything you do report exactly as it appears. If nothing sensitive is still \
+        readable, report nothing at all — that is the expected answer for a page that was \
+        redacted correctly.
+        """
+
+    private static func residuePrompt(for chunk: String) -> String {
+        """
+        This is the text still readable on an already-redacted page. Report only sensitive \
+        values that survived.
+
+        <visible-text>
+        \(chunk)
+        </visible-text>
+        """
+    }
 
     private static func prompt(for chunk: String) -> String {
         """
