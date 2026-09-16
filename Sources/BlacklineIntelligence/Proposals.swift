@@ -66,6 +66,33 @@ public struct ProposalLocator: Sendable {
 
 /// Splits page text into pieces small enough for a model to take in one pass.
 public enum TextChunker {
+    /// Below this, a chunk is not worth splitting further.
+    public static let smallestUsefulChunk = 240
+
+    /// Splits at the line break nearest the middle, or failing that a space, so a chunk
+    /// boundary does not land inside an identifier.
+    ///
+    /// Used when a chunk overflows the model's context window: whether one fits cannot be
+    /// known in advance, because the window holds the reply as well as the prompt, so the
+    /// only workable answer is to react by halving and asking again.
+    public static func halve(_ text: String) -> (String, String)? {
+        let characters = Array(text)
+        guard characters.count > 1 else { return nil }
+        let middle = characters.count / 2
+
+        func nearest(matching predicate: (Character) -> Bool) -> Int? {
+            for offset in 0 ..< middle {
+                if middle - offset > 0, predicate(characters[middle - offset]) { return middle - offset }
+                if middle + offset < characters.count, predicate(characters[middle + offset]) { return middle + offset }
+            }
+            return nil
+        }
+
+        let cut = nearest(matching: \.isNewline) ?? nearest(matching: \.isWhitespace) ?? middle
+        guard cut > 0, cut < characters.count else { return nil }
+        return (String(characters[..<cut]), String(characters[cut...]))
+    }
+
     /// Splits on line boundaries, never mid-line: cutting a line in half could sever an
     /// identifier so that neither piece is recognizable in either chunk.
     public static func chunks(of text: String, maxLength: Int) -> [String] {

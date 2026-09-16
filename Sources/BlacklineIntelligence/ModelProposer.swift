@@ -48,7 +48,11 @@ public struct ModelProposer: Sendable {
     /// boundaries so nothing is silently dropped.
     public let chunkSize: Int
 
-    public init(chunkSize: Int = 2_500) {
+    /// Bounds the generated answer. The window is consumed by the reply as well as the
+    /// prompt, and a dense tax page can carry dozens of identifiers.
+    static let responseTokenLimit = 1_200
+
+    public init(chunkSize: Int = 1_200) {
         self.chunkSize = chunkSize
     }
 
@@ -74,34 +78,65 @@ public struct ModelProposer: Sendable {
     /// The returned proposals are *unlocated* — pass them to ``ProposalLocator`` to turn
     /// them into matches, which is also what discards anything the model invented.
     public func proposals(forPage pageText: String) async throws -> [Proposal] {
-        var seen: Set<Proposal> = []
+        try await ask(pageText, instructions: Self.instructions, prompt: Self.prompt)
+    }
+
+    /// Runs the model over text, splitting it up as far as necessary to fit.
+    ///
+    /// The on-device context window holds the prompt *and* the reply, so a page dense enough
+    /// to produce dozens of findings can overflow it even when the text itself fits. There is
+    /// no way to know in advance, so this reacts: on
+    /// ``LanguageModelSession/GenerationError/exceededContextWindowSize`` the chunk is halved
+    /// and each half asked separately, down to a floor.
+    ///
+    /// Every chunk gets a fresh session, so nothing accumulates across a page and text in one
+    /// part of a document cannot colour how another part is read.
+    private func ask(
+        _ text: String,
+        instructions: String,
+        prompt: @Sendable (String) -> String
+    ) async throws -> [Proposal] {
+        var seen: Set<String> = []
         var ordered: [Proposal] = []
 
-        for chunk in TextChunker.chunks(of: pageText, maxLength: chunkSize) {
-            // A fresh session per chunk: the transcript is not shared, so text on one part
-            // of the page cannot influence how another part is read.
-            let session = LanguageModelSession(instructions: Self.instructions)
-            let response = try await session.respond(
-                to: Self.prompt(for: chunk),
-                generating: FoundPersonalInformation.self,
-                // Greedy sampling so two runs over the same document agree. A privacy tool
-                // that reports different results each time cannot be reasoned about.
-                options: GenerationOptions(sampling: .greedy)
-            )
-
-            for item in response.content.items {
-                let proposal = Proposal(
-                    text: item.text,
-                    kind: item.kind,
-                    reason: item.reason
-                )
-                guard !proposal.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      seen.insert(proposal).inserted
-                else { continue }
+        for chunk in TextChunker.chunks(of: text, maxLength: chunkSize) {
+            for proposal in try await askOne(chunk, instructions: instructions, prompt: prompt) {
+                let trimmed = proposal.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
                 ordered.append(proposal)
             }
         }
         return ordered
+    }
+
+    private func askOne(
+        _ chunk: String,
+        instructions: String,
+        prompt: @Sendable (String) -> String
+    ) async throws -> [Proposal] {
+        do {
+            let session = LanguageModelSession(instructions: instructions)
+            let response = try await session.respond(
+                to: prompt(chunk),
+                generating: FoundPersonalInformation.self,
+                options: GenerationOptions(
+                    // Greedy so two runs over the same document agree.
+                    sampling: .greedy,
+                    maximumResponseTokens: Self.responseTokenLimit
+                )
+            )
+            return response.content.items.map {
+                Proposal(text: $0.text, kind: $0.kind, reason: "")
+            }
+        } catch let error as LanguageModelSession.GenerationError {
+            guard case .exceededContextWindowSize = error,
+                  chunk.count > TextChunker.smallestUsefulChunk,
+                  let (first, second) = TextChunker.halve(chunk)
+            else { throw error }
+
+            return try await askOne(first, instructions: instructions, prompt: prompt)
+                + askOne(second, instructions: instructions, prompt: prompt)
+        }
     }
 
     /// Asks what personal information is *still legible* on a page that has already been
@@ -113,23 +148,8 @@ public struct ModelProposer: Sendable {
     /// then the form's own title, and the page gets blacked out entirely. What is wanted
     /// here is only surviving *values*.
     public func residue(inVisibleText text: String) async throws -> [Proposal] {
-        var seen: Set<String> = []
-        var ordered: [Proposal] = []
-
-        for chunk in TextChunker.chunks(of: text, maxLength: chunkSize) {
-            let session = LanguageModelSession(instructions: Self.residueInstructions)
-            let response = try await session.respond(
-                to: Self.residuePrompt(for: chunk),
-                generating: FoundPersonalInformation.self,
-                options: GenerationOptions(sampling: .greedy)
-            )
-            for item in response.content.items {
-                let candidate = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard ResidueFilter.looksLikeAValue(candidate), seen.insert(candidate).inserted else { continue }
-                ordered.append(Proposal(text: candidate, kind: item.kind, reason: item.reason))
-            }
-        }
-        return ordered
+        try await ask(text, instructions: Self.residueInstructions, prompt: Self.residuePrompt)
+            .filter { ResidueFilter.looksLikeAValue($0.text) }
     }
 
     // MARK: - Prompting
@@ -170,9 +190,9 @@ public struct ModelProposer: Sendable {
         - Partial or garbled words, which are text clipped by a black box rather than \
           information that survived.
 
-        Copy anything you do report exactly as it appears. If nothing sensitive is still \
-        readable, report nothing at all — that is the expected answer for a page that was \
-        redacted correctly.
+        Copy anything you do report exactly as it appears, and keep the list short. If \
+        nothing sensitive is still readable, report nothing at all — that is the expected \
+        answer for a page that was redacted correctly.
         """
 
     private static func residuePrompt(for chunk: String) -> String {
@@ -213,7 +233,8 @@ struct FoundItem {
 
     @Guide(description: "What kind of personal information this is, such as person name, street address, or account number.")
     var kind: String
-
-    @Guide(description: "A short reason this identifies or exposes a specific person.")
-    var reason: String
 }
+
+// A "reason" field used to be generated here and never shown to anyone. The context window
+// holds the reply as well as the prompt, so on a page carrying dozens of identifiers that
+// explanation was enough to overflow it and lose the whole page's findings.

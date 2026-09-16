@@ -243,6 +243,17 @@ inside a privacy tool:
   defense is the rule above: injected text can only cause spans that genuinely appear on
   the page to be redacted, never fewer. Do not weaken this to prompt wording alone.
 
+**The context window holds the reply, not just the prompt.** A page dense enough to produce
+dozens of findings overflows it even when its text fits, and the failure arrives as
+`GenerationError.exceededContextWindowSize` — there is no way to predict it, so the only
+workable answer is to react: `ModelProposer` halves the chunk with `TextChunker.halve` (on a
+line break, else a space, so a boundary never lands inside an identifier) and asks again,
+down to a floor. The generated schema carries no "reason" field for the same reason — it was
+never shown to anyone and its tokens were enough to lose a whole page's findings.
+
+A page the model fails on is **counted and reported**, never swallowed: the rules still ran
+there, but nothing looked for identifiers no rule describes, and the review window says so.
+
 Sampling is `.greedy` so two runs over one document agree — a privacy tool that reports
 different findings each time cannot be reasoned about.
 

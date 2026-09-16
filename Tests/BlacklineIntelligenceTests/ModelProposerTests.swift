@@ -110,3 +110,50 @@ struct ResidueFilterTests {
         #expect(ResidueFilter.looksLikeAValue(candidate))
     }
 }
+
+@Suite("Chunk splitting")
+struct ChunkSplittingTests {
+
+    // The context window holds the reply as well as the prompt, so whether a chunk fits
+    // cannot be known in advance. When one does not, it is halved and asked again — which
+    // only works if halving never lands inside an identifier.
+    @Test("Halving prefers a line break, then a space")
+    func halvesOnBoundaries() throws {
+        let lined = "aaaa bbbb\ncccc dddd"
+        let (first, second) = try #require(TextChunker.halve(lined))
+        #expect(first + second == lined)
+        #expect(second.hasPrefix("\n"))
+
+        let spaced = "aaaaa bbbbb"
+        let (left, right) = try #require(TextChunker.halve(spaced))
+        #expect(left + right == spaced)
+        #expect(right.hasPrefix(" "))
+    }
+
+    @Test("Halving never loses or duplicates text", arguments: [
+        "12-3456789 and 987-65-4321",
+        "one\ntwo\nthree\nfour",
+        String(repeating: "x", count: 501),
+        "a b",
+    ])
+    func halvingIsLossless(_ text: String) throws {
+        let (first, second) = try #require(TextChunker.halve(text))
+        #expect(first + second == text)
+        #expect(!first.isEmpty)
+        #expect(!second.isEmpty)
+    }
+
+    @Test("A single character cannot be halved")
+    func singleCharacter() {
+        #expect(TextChunker.halve("x") == nil)
+        #expect(TextChunker.halve("") == nil)
+    }
+
+    // Splitting has to stop somewhere, or a chunk the model simply refuses would recurse
+    // until every character is its own request.
+    @Test("There is a floor below which splitting stops")
+    func hasAFloor() {
+        #expect(TextChunker.smallestUsefulChunk > 0)
+        #expect(TextChunker.smallestUsefulChunk < 1_200)
+    }
+}

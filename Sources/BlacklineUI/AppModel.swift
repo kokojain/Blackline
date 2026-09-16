@@ -13,6 +13,9 @@ public final class CompletedRun: Identifiable {
     public let result: PDFRedactor.Result
     public let depth: Depth
     public let modelUnavailable: String?
+    /// Pages the model could not read, and how often it failed while re-reading.
+    public let modelFailedPages: [Int]
+    public let modelReadBackFailures: Int
     /// Categories the rules asked for that no detector in this build can find.
     public let unsupportedCategories: [BlacklineKit.Category]
 
@@ -21,12 +24,16 @@ public final class CompletedRun: Identifiable {
         result: PDFRedactor.Result,
         depth: Depth,
         modelUnavailable: String?,
+        modelFailedPages: [Int] = [],
+        modelReadBackFailures: Int = 0,
         unsupportedCategories: [BlacklineKit.Category]
     ) {
         self.sourceURL = sourceURL
         self.result = result
         self.depth = depth
         self.modelUnavailable = modelUnavailable
+        self.modelFailedPages = modelFailedPages
+        self.modelReadBackFailures = modelReadBackFailures
         self.unsupportedCategories = unsupportedCategories
     }
 
@@ -71,6 +78,21 @@ public final class CompletedRun: Identifiable {
             gaps.append((
                 "No detector for \(names)",
                 "Your rules ask for it, but nothing in this build can find one. Quote the value as an exact rule instead."
+            ))
+        }
+
+        if !modelFailedPages.isEmpty {
+            let pages = modelFailedPages.map(String.init).joined(separator: ", ")
+            gaps.append((
+                "The model could not read page\(modelFailedPages.count == 1 ? "" : "s") \(pages)",
+                "Usually too much text for its context window. The rules still ran on \(modelFailedPages.count == 1 ? "that page" : "those pages"); identifiers no rule describes were not looked for there."
+            ))
+        }
+
+        if modelReadBackFailures > 0 {
+            gaps.append((
+                "The model could not finish checking \(modelReadBackFailures) rendered page\(modelReadBackFailures == 1 ? "" : "s")",
+                "Those pages were still checked by the rules and by recognition, but not by the model."
             ))
         }
 
@@ -186,6 +208,8 @@ public final class AppModel {
                     result: result,
                     depth: finished.depth,
                     modelUnavailable: finished.modelUnavailable,
+                    modelFailedPages: finished.modelFailedPages,
+                    modelReadBackFailures: finished.modelReadBackFailures,
                     unsupportedCategories: built.unsupportedCategories
                 )
                 self.runs.insert(completed, at: 0)

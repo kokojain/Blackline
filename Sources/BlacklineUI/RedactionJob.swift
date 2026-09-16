@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import BlacklineKit
 import BlacklineRedactor
+import os
 import BlacklineIntelligence
 
 /// How thoroughly a document is checked.
@@ -93,6 +94,11 @@ public final class RedactionJob: Identifiable {
     /// Set when deep was asked for but the on-device model is not available here. Degrading
     /// silently would misrepresent what was checked.
     public private(set) var modelUnavailable: String?
+    /// Pages the first model pass could not read — usually its context window, on a dense
+    /// page. A page it skipped was not checked by it, so this is reported, not swallowed.
+    public private(set) var modelFailedPages: [Int] = []
+    /// How many times the model failed while re-reading a rendered page.
+    public private(set) var modelReadBackFailures = 0
 
     private var task: Task<Void, Never>?
 
@@ -137,10 +143,20 @@ public final class RedactionJob: Identifiable {
             Task { @MainActor in self?.apply(step) }
         }
 
+        // Failures here are counted, not thrown: one page overflowing the model's context
+        // must not abandon a document the rules have already redacted.
+        let readBackFailures = OSAllocatedUnfairLock(initialState: 0)
         var inspector: PDFRedactor.VisibleTextInspector?
         if usesModel, #available(macOS 26.0, *) {
             let proposer = ModelProposer()
-            inspector = { text in try await proposer.residue(inVisibleText: text).map(\.text) }
+            inspector = { text in
+                do {
+                    return try await proposer.residue(inVisibleText: text).map(\.text)
+                } catch {
+                    readBackFailures.withLock { $0 += 1 }
+                    return []
+                }
+            }
         }
 
         // A document that cannot be proven clean is kept and shown rather than thrown
@@ -162,6 +178,7 @@ public final class RedactionJob: Identifiable {
             )
             result = outcome
             pagesDone = outcome.pageCount
+            modelReadBackFailures = readBackFailures.withLock { $0 }
             phase = .finished
         } catch is CancellationError {
             phase = .cancelled
@@ -177,9 +194,11 @@ public final class RedactionJob: Identifiable {
     /// read-back inspector is a different, narrower question.
     private func firstPassProposals(usesModel: Bool) async throws -> [Int: [Match]] {
         guard usesModel, #available(macOS 26.0, *) else { return [:] }
-        return try await ModelFirstPass.proposals(for: sourceURL) { [weak self] page, total in
+        let outcome = try await ModelFirstPass.proposals(for: sourceURL) { [weak self] page, total in
             Task { @MainActor in self?.apply(.scanning(page: page, of: total)) }
         }
+        modelFailedPages = outcome.failedPages
+        return outcome.located
     }
 
     private func apply(_ step: PDFRedactor.Progress) {
