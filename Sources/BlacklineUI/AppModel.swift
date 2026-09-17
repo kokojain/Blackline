@@ -170,8 +170,11 @@ public final class AppModel {
     /// Set when a run could not start or produced nothing, for the menu bar to show.
     public private(set) var lastProblem: String?
 
-    /// Raised when a finished run should be shown. The app's scene observes it.
-    public var reviewToOpen: UUID?
+    /// Raised when a finished run should be shown, identified by the document it came from.
+    ///
+    /// Keyed by the source rather than the run, so that going again from the review window
+    /// updates the window already open instead of stacking another one beside it.
+    public var reviewToOpen: String?
 
     public init() {
         let defaults = UserDefaults.standard
@@ -211,13 +214,25 @@ public final class AppModel {
         return "\(count) rule\(count == 1 ? "" : "s")"
     }
 
-    public func run(_ run: CompletedRun) -> CompletedRun? { runs.first { $0.id == run.id } }
-    public func run(id: UUID) -> CompletedRun? { runs.first { $0.id == id } }
+    /// The most recent run for a document.
+    public func run(forSource path: String) -> CompletedRun? {
+        runs.first { $0.sourceURL.path == path }
+    }
+
+    /// The plan a document is working from, if it still has one.
+    public func plan(forSource path: String) -> PendingPlan? {
+        pending.first { $0.sourceURL.path == path }
+    }
 
     /// Adds a finished run without having performed it. Used by snapshots and previews so
     /// the review window can be rendered from a real result.
     public func register(_ run: CompletedRun) {
         runs.insert(run, at: 0)
+    }
+
+    /// Adds a waiting plan without having read the document. Used by snapshots and previews.
+    public func registerPending(_ waiting: PendingPlan) {
+        pending.append(waiting)
     }
 
     // MARK: - Starting work
@@ -326,7 +341,7 @@ public final class AppModel {
                 self.runs.removeAll { $0.sourceURL == finished.sourceURL }
                 self.runs.insert(completed, at: 0)
                 self.notify(completed)
-                self.reviewToOpen = completed.id
+                self.reviewToOpen = completed.sourceURL.path
             } else if case .failed(let message) = finished.phase {
                 self.lastProblem = message
             }

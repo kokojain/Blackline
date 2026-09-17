@@ -354,6 +354,14 @@ source of what a Go removes — detectors and the model write the first draft, a
 the file decides. `AppModel.go(_:)` turns the ticked values into `ExactTextMatcher`s, which
 is what makes an untick stick: the detectors do not get a second say.
 
+**Edit plan** and **Go** sit in the review window as well as the menu bar, beside the page
+being looked at, because the loop lives or dies on how cheap it is to change your mind. The
+ticked count is re-read on `didBecomeActive`, since the plan is edited in another program
+and the window would otherwise show a stale number.
+
+The review window is keyed by the **document**, not the run: going again replaces the run,
+so a window keyed by run id would go stale and a second window would open beside the first.
+
 A Go passes `writingTo:` so the copy replaces the one the last Go made. `ModelProposer`
 takes the prose from `globalrules.md` as `guidance`, placed after the scope it was given and
 before the prohibitions, so standing instructions can refine what to look for but cannot

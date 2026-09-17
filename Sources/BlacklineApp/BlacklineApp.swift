@@ -18,9 +18,9 @@ struct BlacklineApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        WindowGroup(id: "review", for: UUID.self) { $runID in
-            if let runID {
-                ReviewView(runID: runID)
+        WindowGroup(id: "review", for: String.self) { $sourcePath in
+            if let sourcePath {
+                ReviewView(sourcePath: sourcePath)
                     .environment(model)
             }
         }

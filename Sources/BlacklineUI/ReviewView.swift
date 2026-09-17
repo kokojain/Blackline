@@ -9,9 +9,11 @@ import BlacklineRedactor
 /// centre, comparison with the original is one key away, and anything that could not be
 /// checked is stated beside the redaction count rather than beneath it.
 public struct ReviewView: View {
-    public let runID: UUID
+    /// Identified by the document, not the run: going again replaces the run, and this
+    /// window should follow it rather than leaving a stale one behind.
+    public let sourcePath: String
 
-    public init(runID: UUID) { self.runID = runID }
+    public init(sourcePath: String) { self.sourcePath = sourcePath }
 
     @Environment(AppModel.self) private var model
     @State private var renderer = PageRenderer()
@@ -20,7 +22,7 @@ public struct ReviewView: View {
     @State private var revealValues = false
 
     public var body: some View {
-        if let run = model.run(id: runID) {
+        if let run = model.run(forSource: sourcePath) {
             content(run)
                 .onAppear { selectedPage = firstPageWorthSeeing(run) }
         } else {
@@ -36,6 +38,11 @@ public struct ReviewView: View {
             }
             Toolbar(run: run)
             Divider()
+
+            if let waiting = model.plan(forSource: sourcePath) {
+                PlanBar(waiting: waiting)
+                Divider()
+            }
 
             HStack(spacing: 0) {
                 PageRail(run: run, renderer: renderer, selected: $selectedPage)
@@ -144,6 +151,64 @@ private struct UnverifiedBar: View {
             }
         } message: {
             Text("The original is untouched and stays where it is.")
+        }
+    }
+}
+
+// MARK: - Plan
+
+/// The document's plan, and the two things you can do with it from here.
+///
+/// The loop lives or dies on how cheap it is to change your mind, so Edit plan and Go sit
+/// beside the page you are looking at rather than back in the menu bar. The ticked count is
+/// re-read whenever the app comes forward, because the plan is edited in another program
+/// entirely and this window would otherwise show a stale number.
+private struct PlanBar: View {
+    @Environment(AppModel.self) private var model
+    let waiting: PendingPlan
+
+    @State private var ticked = 0
+    @State private var confirmingDelete = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checklist").foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(ticked) item\(ticked == 1 ? "" : "s") ticked in \(waiting.planURL.lastPathComponent)")
+                    .font(.system(size: 12, weight: .medium))
+                Text("Edit the plan and press Go to replace this copy")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // The plan lists the values in full, beside the original. Getting rid of it is
+            // one action, next to getting rid of the copy.
+            Button("Delete plan", role: .destructive) { confirmingDelete = true }
+
+            Button("Edit plan") { model.editPlan(waiting) }
+
+            Button("Go") { model.go(waiting) }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.current != nil || model.analysing != nil || ticked == 0)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 46)
+        .background(.quaternary.opacity(0.22))
+        .onAppear { ticked = waiting.selectedCount }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            ticked = waiting.selectedCount
+        }
+        .confirmationDialog(
+            "Delete \(waiting.planURL.lastPathComponent)?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete plan", role: .destructive) { model.forget(waiting) }
+        } message: {
+            Text("It lists the values found in this document in full. The redacted copy and the original are both left alone.")
         }
     }
 }

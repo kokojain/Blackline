@@ -196,6 +196,29 @@ struct ReviewSnapshotTests {
 
     // MARK: - Tests
 
+    /// With a plan in hand, so the Edit plan and Go controls are in the shot.
+    @Test("The review window renders with its plan bar", .enabled(if: snapshotsEnabled))
+    func reviewWindowWithPlan() async throws {
+        let (model, run) = try await Self.run(scannedPage: false)
+        defer { try? FileManager.default.removeItem(at: run.sourceURL.deletingLastPathComponent()) }
+
+        let plan = DocumentPlan(sourceName: run.sourceURL.lastPathComponent, items: [
+            .init(value: "12-3456789", label: "employer identification numbers", page: 1),
+            .init(value: "Jane Q Taxpayer", label: "person name", page: 1),
+            .init(isSelected: false, value: "1,284,300", label: "amount", page: 1),
+        ])
+        let planURL = try plan.write(for: run.sourceURL, globalRulesPath: "~/Documents/globalrules.md")
+        model.registerPending(
+            PendingPlan(sourceURL: run.sourceURL, planURL: planURL)
+        )
+
+        _ = try Self.write(
+            ReviewView(sourcePath: run.sourceURL.path).environment(model),
+            size: CGSize(width: 1100, height: 760),
+            named: "review-with-plan"
+        )
+    }
+
     @Test("The review window renders a finished run", .enabled(if: snapshotsEnabled))
     func reviewWindow() async throws {
         let (model, run) = try await Self.run(scannedPage: false)
@@ -203,7 +226,7 @@ struct ReviewSnapshotTests {
         #expect(run.gaps.isEmpty == false || run.unsupportedCategories.isEmpty)
 
         let url = try Self.write(
-            ReviewView(runID: run.id).environment(model),
+            ReviewView(sourcePath: run.sourceURL.path).environment(model),
             size: CGSize(width: 1100, height: 720),
             named: "review-window"
         )
@@ -219,7 +242,7 @@ struct ReviewSnapshotTests {
         #expect(run.gaps.contains { $0.title.contains("no text layer") })
 
         let url = try Self.write(
-            ReviewView(runID: run.id).environment(model),
+            ReviewView(sourcePath: run.sourceURL.path).environment(model),
             size: CGSize(width: 1100, height: 720),
             named: "review-not-checked"
         )
@@ -460,7 +483,7 @@ struct UnverifiedOutputTests {
         defer { try? FileManager.default.removeItem(at: run.sourceURL.deletingLastPathComponent()) }
 
         _ = try ReviewSnapshotTests.write(
-            ReviewView(runID: run.id).environment(model),
+            ReviewView(sourcePath: run.sourceURL.path).environment(model),
             size: CGSize(width: 1100, height: 760),
             named: "review-unverified"
         )

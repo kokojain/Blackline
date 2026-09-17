@@ -48,7 +48,7 @@ public struct MenuBarView: View {
                 Divider().padding(.vertical, 4)
                 SectionLabel("Recent")
                 ForEach(model.runs.prefix(4)) { run in
-                    RecentRow(run: run) { openWindow(id: "review", value: run.id) }
+                    RecentRow(run: run) { openWindow(id: "review", value: run.sourceURL.path) }
                 }
             }
 

@@ -207,3 +207,46 @@ struct GoLoopTests {
         }
     }
 }
+
+/// The review window is keyed by the document, not the run.
+@MainActor
+@Suite("Review window follows the document", .serialized)
+struct ReviewWindowIdentityTests {
+
+    // Going again replaces the run, so a window keyed by run id would go stale and a second
+    // window would open beside the first.
+    @Test("A second Go updates the same window rather than opening another")
+    func secondGoKeepsOneWindow() async throws {
+        let source = try UIRendering.ReviewSnapshotTests.makeFixture(scannedPage: false)
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+
+        let model = AppModel()
+        let matchers = MatcherFactory()
+            .makeMatchers(for: RulesParser().parse("social security numbers").ruleSet).matchers
+
+        func redactOnce() async throws -> CompletedRun {
+            let result = try await PDFRedactor(verifiesByReading: false)
+                .redact(documentAt: source, matchers: matchers, writingTo: nil)
+            let completed = CompletedRun(
+                sourceURL: source, result: result, depth: .fast,
+                modelUnavailable: nil, unsupportedCategories: []
+            )
+            model.register(completed)
+            return completed
+        }
+
+        let first = try await redactOnce()
+        #expect(model.run(forSource: source.path)?.id == first.id)
+
+        let second = try await redactOnce()
+        // Same key, newest run.
+        #expect(model.run(forSource: source.path)?.id == second.id)
+        #expect(second.id != first.id)
+    }
+
+    @Test("A document with no plan shows no plan bar")
+    func noPlanNoBar() throws {
+        let model = AppModel()
+        #expect(model.plan(forSource: "/nowhere/absent.pdf") == nil)
+    }
+}
