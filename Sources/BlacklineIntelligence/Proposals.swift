@@ -141,3 +141,28 @@ public enum ResidueFilter {
         return true
     }
 }
+
+/// Rejects spans that are not identifying, whatever a model calls them.
+///
+/// A tax return is mostly figures, and almost none of them identify anyone. Asked the
+/// general question a model will happily report wages, totals and balances as sensitive;
+/// blacking those out destroys the document for whoever has to read it and protects nobody.
+/// The prompt says so too, but a prompt is a request and this is a guarantee.
+public enum ProposalFilter {
+    public static func isNotIdentifying(_ candidate: String) -> Bool {
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+
+        // Money and bare quantities: digits with grouping separators, an optional currency
+        // mark and an optional decimal part — "84,320.00", "$1,250", "(2,000)", "12.5%".
+        let money = /^[\(\)\$£€\-+ ]*[0-9][0-9,. ]*[\)%]?$/
+        if trimmed.wholeMatch(of: money) != nil {
+            // An identifier made only of digits and separators is still an identifier, and
+            // those run long: a total is rarely nine digits, an account number usually is.
+            let digits = trimmed.filter(\.isNumber).count
+            let hasDecimals = trimmed.contains(".") || trimmed.contains("%")
+            return hasDecimals || digits < 8
+        }
+        return false
+    }
+}

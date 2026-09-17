@@ -118,11 +118,13 @@ if options.useModel {
     }
     let proposer = ModelProposer()
     let locator = ProposalLocator()
+    // Told to find what the rules ask for, rather than deciding for itself.
+    let wanted = parsed.ruleSet.categories.map(\.canonicalName)
     for index in 0 ..< document.pageCount {
         guard let page = document.page(at: index), let pageText = page.string, !pageText.isEmpty else { continue }
         print("Reading page \(index + 1) of \(document.pageCount) with the on-device model…")
         do {
-            let proposals = try await proposer.proposals(forPage: pageText)
+            let proposals = try await proposer.proposals(forPage: pageText, wanted: wanted)
             let (located, unlocated) = locator.locate(proposals, in: SourceText(pageText))
             unlocatedCount += unlocated.count
             var spans: Set<Range<String.Index>> = []
@@ -196,8 +198,9 @@ let progress: PDFRedactor.ProgressHandler = { step in
 var inspector: PDFRedactor.VisibleTextInspector?
 if options.useModel, #available(macOS 26.0, *) {
     let proposer = ModelProposer()
+    let wanted = parsed.ruleSet.categories.map(\.canonicalName)
     inspector = { visibleText in
-        try await proposer.residue(inVisibleText: visibleText).map(\.text)
+        try await proposer.residue(inVisibleText: visibleText, wanted: wanted).map(\.text)
     }
 }
 

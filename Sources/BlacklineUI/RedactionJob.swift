@@ -86,6 +86,9 @@ public final class RedactionJob: Identifiable {
     public let id = UUID()
     public let sourceURL: URL
     public let depth: Depth
+    /// The categories the rules file asks for. The model is told to find these and nothing
+    /// else — left to its own judgement it redacts every figure on a tax return.
+    public let wantedCategories: [String]
 
     public private(set) var phase: Phase = .waiting
     public private(set) var pagesDone = 0
@@ -107,9 +110,10 @@ public final class RedactionJob: Identifiable {
         return min(1, Double(pagesDone) / Double(pageCount))
     }
 
-    public init(sourceURL: URL, depth: Depth) {
+    public init(sourceURL: URL, depth: Depth, wantedCategories: [String] = []) {
         self.sourceURL = sourceURL
         self.depth = depth
+        self.wantedCategories = wantedCategories
     }
 
     public func cancel() {
@@ -149,9 +153,10 @@ public final class RedactionJob: Identifiable {
         var inspector: PDFRedactor.VisibleTextInspector?
         if usesModel, #available(macOS 26.0, *) {
             let proposer = ModelProposer()
+            let wanted = wantedCategories
             inspector = { text in
                 do {
-                    return try await proposer.residue(inVisibleText: text).map(\.text)
+                    return try await proposer.residue(inVisibleText: text, wanted: wanted).map(\.text)
                 } catch {
                     readBackFailures.withLock { $0 += 1 }
                     return []
@@ -194,7 +199,10 @@ public final class RedactionJob: Identifiable {
     /// read-back inspector is a different, narrower question.
     private func firstPassProposals(usesModel: Bool) async throws -> [Int: [Match]] {
         guard usesModel, #available(macOS 26.0, *) else { return [:] }
-        let outcome = try await ModelFirstPass.proposals(for: sourceURL) { [weak self] page, total in
+        let outcome = try await ModelFirstPass.proposals(
+            for: sourceURL,
+            wanted: wantedCategories
+        ) { [weak self] page, total in
             Task { @MainActor in self?.apply(.scanning(page: page, of: total)) }
         }
         modelFailedPages = outcome.failedPages

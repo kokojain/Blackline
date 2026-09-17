@@ -157,3 +157,40 @@ struct ChunkSplittingTests {
         #expect(TextChunker.smallestUsefulChunk < 1_200)
     }
 }
+
+@Suite("ProposalFilter")
+struct ProposalFilterTests {
+
+    // A tax return is mostly figures, and almost none of them identify anyone. Redacting
+    // them ruins the document for whoever has to read it and protects nobody.
+    @Test("Rejects money and bare quantities", arguments: [
+        "84,320.00", "1,250.00", "$1,250", "$ 84,320.00", "284,300", "0", "12.5%",
+        "(2,000)", "100.000 %", "18,400", "6,250", "2025", "1120",
+    ])
+    func rejectsMoney(_ candidate: String) {
+        #expect(ProposalFilter.isNotIdentifying(candidate))
+    }
+
+    // Long digit runs are identifiers even though they are made only of digits, so the
+    // filter has to let them through.
+    @Test("Keeps identifiers that happen to be all digits", arguments: [
+        "000123456789", "123456789", "021000021", "4111111111111111",
+    ])
+    func keepsLongDigitRuns(_ candidate: String) {
+        #expect(!ProposalFilter.isNotIdentifying(candidate))
+    }
+
+    @Test("Keeps everything that is plainly identifying", arguments: [
+        "12-3456789", "123-45-6789", "Jane Q Taxpayer", "Knob LLC",
+        "123 Harbor View Drive", "Portland, ME 04101", "4111 1111 1111 1111",
+    ])
+    func keepsIdentifiers(_ candidate: String) {
+        #expect(!ProposalFilter.isNotIdentifying(candidate))
+    }
+
+    @Test("Rejects nothing-at-all")
+    func rejectsEmpty() {
+        #expect(ProposalFilter.isNotIdentifying(""))
+        #expect(ProposalFilter.isNotIdentifying("   "))
+    }
+}

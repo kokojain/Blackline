@@ -21,6 +21,7 @@ enum ModelFirstPass {
 
     static func proposals(
         for url: URL,
+        wanted: [String],
         progress: @escaping @Sendable (Int, Int) -> Void
     ) async throws -> Outcome {
         guard let document = PDFDocument(url: url), !document.isLocked else { return Outcome() }
@@ -42,7 +43,7 @@ enum ModelFirstPass {
             // document because one page overflowed the context window would be worse.
             let proposed: [Proposal]
             do {
-                proposed = try await proposer.proposals(forPage: text)
+                proposed = try await proposer.proposals(forPage: text, wanted: wanted)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {

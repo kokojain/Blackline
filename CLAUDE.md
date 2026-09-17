@@ -125,6 +125,15 @@ happening — twice. The guards that actually work are the span check in `redact
 read-back loop below. Note the span check validates the *index mapping*, not the *bounds* —
 it passed on the misplaced boxes described above.
 
+### The model finds what the rules ask for
+
+The model is told the categories from the user's `redact.txt` and to report nothing else.
+Left to its own judgement it decides for itself what is sensitive, and on a tax return that
+means every dollar figure on the page: wages, totals, balances. Blacking those out ruins the
+document for whoever has to read it and protects nobody — a return is mostly figures and
+almost none of them identify anyone. `ProposalFilter.isNotIdentifying` is the hard guard
+behind the prompt, since a prompt is a request and this needs to be a guarantee.
+
 ### The read-back loop
 
 `PDFRedactor.settle(page:…)` renders a page, reads it back with Vision, and blacks out
@@ -141,10 +150,16 @@ Two properties keep the loop honest:
 
 - **It terminates on its own.** Covered text cannot be read again, so a finding that gets
   blacked out does not come back.
-- **Findings are grounded in the source.** A reported span only counts if it genuinely
-  appears in the original page text. Recognition of a half-covered word returns fragments
-  ("ificatil", "ETN 9") and a checker faithfully reports them; grounding discards those
-  without having to guess which findings are real.
+- **A rule hit is acted on; a checker's report is not.** A matcher finding an identifier on
+  the rendered page is evidence in its own right — that is how a value printed inside an
+  image gets caught, since the text layer never showed it to anyone. What a checker
+  *reports* goes through `worthActingOn` first, which keeps only values this page already
+  set out to remove. Asked what is still visible on a redacted page, a checker answers with
+  the field labels beside the boxes, the form's title, every line-item caption down a tax
+  return, and fragments of clipped words. Acting on those blacks out more of the page every
+  pass. The failure this loop exists for — a box that landed wrong — always concerns a value
+  the first pass already found; finding something genuinely new is the first pass's job, on
+  clean text, which it does far more reliably.
 
 Asked the general "find personal information" question, a model looking at an already
 redacted page reports the field labels beside the black boxes and then the form's own title,

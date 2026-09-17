@@ -348,6 +348,8 @@ public struct PDFRedactor: Sendable {
                 page: page,
                 pageNumber: index + 1,
                 originalText: pageText,
+                intended: matches.map(\.matchedText)
+                    + doomedAnnotations.compactMap(\.widgetStringValue),
                 boxes: boxes,
                 matchers: matchers,
                 inspectVisibleText: inspectVisibleText,
@@ -444,6 +446,7 @@ public struct PDFRedactor: Sendable {
         page: PDFPage,
         pageNumber: Int,
         originalText: String,
+        intended: [String],
         boxes initialBoxes: [CGRect],
         matchers: [any Matcher],
         inspectVisibleText: VisibleTextInspector?,
@@ -476,18 +479,16 @@ public struct PDFRedactor: Sendable {
                 .flatMap { $0.matches(in: SourceText(reading.text)) }
                 .map(\.matchedText)
 
-            // And what a reader would notice that no rule describes.
+            // A rule matching the rendered page is evidence in its own right and is acted on
+            // as it stands — that is how a value printed inside an image gets caught, since
+            // the text layer never showed it to anyone.
             //
-            // Grounded against the original page: a span only counts if it genuinely
-            // appears in the document. OCR of a half-covered word returns fragments
-            // ("ificatil", "ETN 9") and an inspector will faithfully report them as
-            // findings; requiring the span to exist in the source discards those without
-            // having to guess which findings are real.
+            // What a checker *reports* is different, and is narrowed to values this page
+            // already set out to remove. See `worthActingOn`.
             if let inspectVisibleText, !reading.isEmpty {
                 progress?(.consultingModel(page: pageNumber, pass: pass))
-                let source = SourceText.normalize(originalText).lowercased()
-                stillVisible += try await inspectVisibleText(reading.text)
-                    .filter { source.contains(SourceText.normalize($0).lowercased()) }
+                let reported = try await inspectVisibleText(reading.text)
+                stillVisible += Self.worthActingOn(reported, intended: intended)
             }
 
             // Only act on spans that can actually be located on the page.
@@ -649,6 +650,39 @@ public struct PDFRedactor: Sendable {
         // Horizontal extent stays with the selection, which is authoritative; only the
         // vertical band comes from the glyphs.
         return CGRect(x: bounds.minX, y: row.minY, width: bounds.width, height: row.height)
+    }
+
+    /// Filters what a *checker* reports down to values this page actually set out to remove.
+    ///
+    /// Applies to reports only, never to a rule matching the rendered page — a rule hit is
+    /// evidence on its own, and is what catches a value printed inside an image.
+    ///
+    /// A checker is asked what is still visible on a page that has already been redacted,
+    /// and answers with a great deal that is not evidence of anything: the field labels
+    /// beside the boxes, the form's title, every line-item caption down a tax return, and
+    /// fragments of words the boxes clipped. Acting on those blacks out more of the page
+    /// every pass and ruins the document while protecting nobody. The failure this loop
+    /// exists for — a box that landed wrong, leaving a value still showing — always concerns
+    /// a value the first pass already found. Asked what is still visible on a
+    /// redacted page, a model returns the field labels beside the boxes, the form's title,
+    /// the line-item captions down a tax return, and fragments of words the boxes clipped.
+    /// Acting on those blacks out more of the page every pass and ruins the document while
+    /// protecting nobody.
+    ///
+    /// Finding something genuinely new is the first pass's job, on clean text, which it does
+    /// far more reliably than it reads a page it has already redacted.
+    static func worthActingOn(_ reported: [String], intended: [String]) -> [String] {
+        let wanted = intended
+            .map { SourceText.normalize($0).lowercased() }
+            .filter { !$0.isEmpty }
+
+        return reported.filter { span in
+            let candidate = SourceText.normalize(span).lowercased()
+            guard !candidate.isEmpty else { return false }
+            // Either direction: recognition may return only part of a value, or a little
+            // more of the line than the value itself.
+            return wanted.contains { $0.contains(candidate) || candidate.contains($0) }
+        }
     }
 
     // MARK: - Rendering

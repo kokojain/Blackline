@@ -18,7 +18,11 @@ struct PDFRedactorTests {
     // MARK: - Helpers
 
     /// Builds a small, well-formed PDF in a temporary directory.
-    static func makePDF(lines: [String], named name: String = "doc") throws -> URL {
+    static func makePDF(
+        lines: [String],
+        burnedIn: [String] = [],
+        named name: String = "doc"
+    ) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("blackline-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -44,6 +48,32 @@ struct PDFRedactorTests {
             }
             y -= 20
         }
+        // Drawn as a bitmap, so this text carries no text layer: nothing can match it, and
+        // it survives redaction the way a scanned value would.
+        if !burnedIn.isEmpty {
+            let scale: CGFloat = 3
+            let strip = CGRect(x: 0, y: 380, width: 612, height: 120)
+            let bitmap = CGContext(
+                data: nil, width: Int(strip.width * scale), height: Int(strip.height * scale),
+                bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            )!
+            bitmap.setFillColor(CGColor(gray: 1, alpha: 1))
+            bitmap.fill(CGRect(x: 0, y: 0, width: strip.width * scale, height: strip.height * scale))
+            bitmap.scaleBy(x: scale, y: scale)
+            let font = CTFontCreateWithName("Helvetica" as CFString, 13, nil)
+            var y: CGFloat = strip.height - 30
+            for line in burnedIn {
+                let attributed = NSAttributedString(
+                    string: line, attributes: [.font: font, .foregroundColor: NSColor.black]
+                )
+                bitmap.textPosition = CGPoint(x: 54, y: y)
+                CTLineDraw(CTLineCreateWithAttributedString(attributed), bitmap)
+                y -= 24
+            }
+            context.draw(bitmap.makeImage()!, in: strip)
+        }
+
         context.endPDFPage()
         context.closePDF()
         return url
@@ -220,99 +250,50 @@ struct PDFRedactorVerificationTests {
         MatcherFactory().makeMatchers(for: RulesParser().parse(rules).ruleSet).matchers
     }
 
-    // The behaviour asked for: check the rendered page, and if something sensitive is still
-    // showing, black it out and render again.
-    @Test("Residue found on the rendered page triggers another pass")
-    func residueTriggersAnotherPass() async throws {
-        let source = try PDFRedactorTests.makePDF(lines: [
-            "Your social security number: 123-45-6789",
-            "Employer: Knob LLC",
-        ])
+    // An identifier that exists only inside an image: no matcher can see it in the text
+    // layer, so it survives the first pass and only the read-back can find it.
+    @Test("An identifier printed inside an image is caught by reading the page back")
+    func valueOnlyInAnImageIsCaught() async throws {
+        let source = try PDFRedactorTests.makePDF(
+            lines: ["Your social security number: 123-45-6789"],
+            burnedIn: ["Prior year copy - SSN 987-65-4321"]
+        )
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
-
-        // Stands in for the model: reports something real the first time it is asked, then
-        // agrees the page is clean.
-        let asked = OSAllocatedUnfairLock(initialState: 0)
-        let inspector: PDFRedactor.VisibleTextInspector = { _ in
-            asked.withLock { count in
-                count += 1
-                return count == 1 ? ["Knob LLC"] : []
-            }
-        }
 
         let result = try await PDFRedactor().redact(
             documentAt: source,
-            matchers: matchers("social security numbers"),
-            inspectVisibleText: inspector
+            matchers: matchers("social security numbers")
         )
 
-        #expect(result.verificationPasses == 2)
-        #expect(result.residueCaughtOnRecheck.contains("Knob LLC"))
-        #expect(asked.withLock { $0 } >= 2)
+        #expect(result.verificationPasses >= 2, "the image-only SSN should force another pass")
+        #expect(result.residueCaughtOnRecheck.contains { $0.contains("987-65-4321") })
     }
 
-    // Without this the checker chases OCR fragments of half-covered words and never settles.
-    @Test("Residue that is not in the document is ignored")
-    func ungroundedResidueIsIgnored() async throws {
+    // The bug that prompted this: asked what is still visible, a checker reports the line
+    // captions down a tax return, and acting on them blacks out the document's meaning.
+    @Test("A report of something the page never set out to remove is ignored")
+    func reportsOfUnintendedTextAreIgnored() async throws {
         let source = try PDFRedactorTests.makePDF(lines: [
             "Your social security number: 123-45-6789",
+            "1a Gross receipts or sales   1,284,300",
+            "3  Gross profit               671,850",
         ])
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
-
-        let inspector: PDFRedactor.VisibleTextInspector = { _ in ["ificatil", "ETN 9"] }
 
         let result = try await PDFRedactor().redact(
             documentAt: source,
             matchers: matchers("social security numbers"),
-            inspectVisibleText: inspector
+            inspectVisibleText: { _ in ["Gross profit", "Gross receipts or sales", "1,284,300"] }
         )
 
         #expect(result.verificationPasses == 1)
         #expect(result.residueCaughtOnRecheck.isEmpty)
-    }
+        #expect(result.disposition == .written)
 
-    // Spec §5.6: a page still showing something after the last allowed pass produces no file
-    // at all, rather than one the user has to check by hand.
-    @Test("A page still dirty when the passes run out aborts the document")
-    func unsettleablePageAborts() async throws {
-        let source = try PDFRedactorTests.makePDF(lines: [
-            "Your social security number: 123-45-6789",
-            "Employer: Knob LLC",
-        ])
-        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
-
-        let inspector: PDFRedactor.VisibleTextInspector = { _ in ["Knob LLC"] }
-
-        // One pass allowed, and that pass finds something: there is no budget to fix it.
-        await #expect(throws: PDFRedactor.Failure.self) {
-            try await PDFRedactor(maximumVerificationPasses: 1).redact(
-                documentAt: source,
-                matchers: matchers("social security numbers"),
-                inspectVisibleText: inspector
-            )
-        }
-        #expect(!FileManager.default.fileExists(atPath: PDFRedactor.outputURL(for: source).path))
-    }
-
-    // Covered text cannot be read again, which is what makes the loop terminate rather than
-    // chase the same finding forever.
-    @Test("A finding that gets covered does not reappear on the next pass")
-    func loopConverges() async throws {
-        let source = try PDFRedactorTests.makePDF(lines: [
-            "Your social security number: 123-45-6789",
-            "Employer: Knob LLC",
-        ])
-        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
-
-        // Asks for the same span on every pass; it should be satisfied once it is covered.
-        let inspector: PDFRedactor.VisibleTextInspector = { _ in ["Knob LLC"] }
-
-        let result = try await PDFRedactor(maximumVerificationPasses: 4).redact(
-            documentAt: source,
-            matchers: matchers("social security numbers"),
-            inspectVisibleText: inspector
-        )
-        #expect(result.verificationPasses == 2)
+        // The figures are still in the document, because they were never anyone's target.
+        let text = PDFRedactorTests.text(of: result.outputURL)
+        #expect(result.redactedItemCount == 1)
+        #expect(!text.contains("123-45-6789"))
     }
 
     @Test("Progress is reported for each stage")
@@ -356,21 +337,21 @@ struct PDFRedactorUnverifiedTests {
         MatcherFactory().makeMatchers(for: RulesParser().parse(rules).ruleSet).matchers
     }
 
-    /// One pass allowed, and that pass finds something: no budget left to clear it.
+    /// One pass allowed, and the page carries a copy of the SSN baked in as an image, so
+    /// that pass finds something genuinely still readable and has no budget left to fix it.
     private func unverifiable(_ source: URL) async throws -> PDFRedactor.Result {
         try await PDFRedactor(maximumVerificationPasses: 1, holdsUnverifiedOutputForReview: true)
-            .redact(
-                documentAt: source,
-                matchers: matchers("social security numbers"),
-                inspectVisibleText: { _ in ["Knob LLC"] }
-            )
+            .redact(documentAt: source, matchers: matchers("social security numbers"))
     }
 
     private func fixture() throws -> URL {
-        try PDFRedactorTests.makePDF(lines: [
-            "Your social security number: 123-45-6789",
-            "Employer: Knob LLC",
-        ])
+        try PDFRedactorTests.makePDF(
+            lines: [
+                "Your social security number: 123-45-6789",
+                "Employer: Knob LLC",
+            ],
+            burnedIn: ["Prior year copy - SSN 987-65-4321"]
+        )
     }
 
     // The behaviour that matters: the run produces a file. Failing the whole document when
@@ -450,7 +431,7 @@ struct PDFRedactorUnverifiedTests {
         await #expect(throws: PDFRedactor.Failure.self) {
             try await PDFRedactor(maximumVerificationPasses: 1).redact(
                 documentAt: source,
-                matchers: matchers("social security numbers"),
+                matchers: matchers("social security numbers\n\"Knob LLC\""),
                 inspectVisibleText: { _ in ["Knob LLC"] }
             )
         }
@@ -459,7 +440,10 @@ struct PDFRedactorUnverifiedTests {
 
     @Test("A clean document reports itself as verified")
     func cleanDocumentIsVerified() async throws {
-        let source = try fixture()
+        let source = try PDFRedactorTests.makePDF(lines: [
+            "Your social security number: 123-45-6789",
+            "Employer: Knob LLC",
+        ])
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
 
         let result = try await PDFRedactor(holdsUnverifiedOutputForReview: true)
@@ -469,5 +453,47 @@ struct PDFRedactorUnverifiedTests {
         #expect(!result.isUnverified)
         #expect(result.problems.isEmpty)
         #expect(FileManager.default.fileExists(atPath: result.outputURL.path))
+    }
+}
+
+@Suite("What a checker reports is worth acting on")
+struct WorthActingOnTests {
+
+    private let intended = ["12-3456789", "Jane Q Taxpayer", "123 Harbor View Drive"]
+
+    // The bug that prompted this: on a tax return the checker reports every line caption and
+    // every figure, and acting on them blacks out the document's meaning.
+    @Test("Ignores line captions, form furniture and money", arguments: [
+        "Gross profit", "Gross receipts or sales", "Compensation of officers",
+        "Salaries and wages", "1,284,300", "671,850",
+        "Form 1120-S", "Employer identification number", "Name:",
+    ])
+    func ignoresWhatWasNeverTargeted(_ reported: String) {
+        #expect(PDFRedactor.worthActingOn([reported], intended: intended).isEmpty)
+    }
+
+    @Test("Keeps values the page set out to remove", arguments: [
+        "12-3456789", "Jane Q Taxpayer", "123 Harbor View Drive",
+    ])
+    func keepsIntendedValues(_ reported: String) {
+        #expect(PDFRedactor.worthActingOn([reported], intended: intended) == [reported])
+    }
+
+    // Recognition returns a little more or a little less of a line than the value itself.
+    @Test("Matches a partial or surrounding reading of an intended value")
+    func toleratesPartialReadings() {
+        #expect(PDFRedactor.worthActingOn(["Jane Q"], intended: intended) == ["Jane Q"])
+        #expect(PDFRedactor.worthActingOn(["123 Harbor View Drive, Portland"], intended: intended).count == 1)
+    }
+
+    @Test("Ignores case and spacing differences")
+    func ignoresCaseAndSpacing() {
+        #expect(PDFRedactor.worthActingOn(["jane  q   taxpayer"], intended: intended).count == 1)
+    }
+
+    @Test("Reports nothing when the page intended nothing")
+    func emptyIntent() {
+        #expect(PDFRedactor.worthActingOn(["anything"], intended: []).isEmpty)
+        #expect(PDFRedactor.worthActingOn([""], intended: intended).isEmpty)
     }
 }

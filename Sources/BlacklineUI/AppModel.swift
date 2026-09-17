@@ -196,7 +196,13 @@ public final class AppModel {
         }
 
         let built = MatcherFactory().makeMatchers(for: parsed.ruleSet)
-        let job = RedactionJob(sourceURL: url, depth: depth)
+        // The model is told to look for exactly what the rules ask for. Without this it
+        // decides for itself and blacks out every dollar figure on a tax return.
+        let job = RedactionJob(
+            sourceURL: url,
+            depth: depth,
+            wantedCategories: parsed.ruleSet.categories.map(\.canonicalName)
+        )
         current = job
         lastProblem = nil
 

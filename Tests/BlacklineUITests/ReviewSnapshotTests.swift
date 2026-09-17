@@ -44,7 +44,7 @@ struct ReviewSnapshotTests {
 
     /// A document shaped like the corporate return that first leaked an EIN, plus an
     /// image-only page so the unexamined state is exercised for real.
-    static func makeFixture(scannedPage: Bool) throws -> URL {
+    static func makeFixture(scannedPage: Bool, burnedInSSN: Bool = false) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("blackline-ui-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -55,7 +55,36 @@ struct ReviewSnapshotTests {
             throw CocoaError(.fileWriteUnknown)
         }
 
-        func page(_ lines: [String], asImage: Bool) {
+        /// Draws `strip` into the current page as a bitmap, so its text carries no text
+        /// layer: no matcher can see it, and only reading the rendered page back can.
+        func burnIn(_ strip: [String]) {
+            let area = CGRect(x: 0, y: 300, width: 612, height: 90)
+            let scale: CGFloat = 3
+            let bitmap = CGContext(
+                data: nil, width: Int(area.width * scale), height: Int(area.height * scale),
+                bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            )!
+            bitmap.setFillColor(CGColor(gray: 1, alpha: 1))
+            bitmap.fill(CGRect(x: 0, y: 0, width: area.width * scale, height: area.height * scale))
+            bitmap.scaleBy(x: scale, y: scale)
+
+            // Drawn relative to the strip, not the page: the shared helper starts at the
+            // page's height, which would put this text off the top of a 90pt bitmap.
+            let font = CTFontCreateWithName("Helvetica" as CFString, 13, nil)
+            var y = area.height - 28
+            for line in strip {
+                let attributed = NSAttributedString(
+                    string: line, attributes: [.font: font, .foregroundColor: NSColor.black]
+                )
+                bitmap.textPosition = CGPoint(x: 54, y: y)
+                CTLineDraw(CTLineCreateWithAttributedString(attributed), bitmap)
+                y -= 24
+            }
+            context.draw(bitmap.makeImage()!, in: area)
+        }
+
+        func page(_ lines: [String], asImage: Bool, burnedIn: [String] = []) {
             context.beginPDFPage(nil)
             context.setFillColor(CGColor(gray: 1, alpha: 1))
             context.fill(box)
@@ -75,6 +104,7 @@ struct ReviewSnapshotTests {
             } else {
                 draw(lines, into: context)
             }
+            if !burnedIn.isEmpty { burnIn(burnedIn) }
             context.endPDFPage()
         }
 
@@ -103,7 +133,7 @@ struct ReviewSnapshotTests {
             "Shareholder's name: Jane Q Taxpayer",
             "Shareholder's identifying number: 123-45-6789",
             "Account number: 000123456789",
-        ], asImage: false)
+        ], asImage: false, burnedIn: burnedInSSN ? ["Prior year copy - SSN 987-65-4321"] : [])
 
         page([
             "Statement 1 — Other deductions", "",
@@ -364,7 +394,7 @@ struct MaskingTests {
 struct UnverifiedOutputTests {
 
     static func unverifiedRun() async throws -> (AppModel, CompletedRun) {
-        let source = try ReviewSnapshotTests.makeFixture(scannedPage: false)
+        let source = try ReviewSnapshotTests.makeFixture(scannedPage: false, burnedInSSN: true)
         let parsed = RulesParser().parse("""
         "Jane Q"
         social security numbers
@@ -372,14 +402,12 @@ struct UnverifiedOutputTests {
         """)
         let built = MatcherFactory().makeMatchers(for: parsed.ruleSet)
 
+        // One pass allowed, and an image-only SSN on the page: the pass finds something
+        // genuinely still readable and has no budget left to cover it.
         let result = try await PDFRedactor(
             maximumVerificationPasses: 1,
             holdsUnverifiedOutputForReview: true
-        ).redact(
-            documentAt: source,
-            matchers: built.matchers,
-            inspectVisibleText: { _ in ["Knob LLC"] }
-        )
+        ).redact(documentAt: source, matchers: built.matchers)
 
         let run = CompletedRun(
             sourceURL: source,
