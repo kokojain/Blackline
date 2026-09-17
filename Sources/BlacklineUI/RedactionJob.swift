@@ -120,15 +120,34 @@ public final class RedactionJob: Identifiable {
         task?.cancel()
     }
 
-    public func run(matchers: [any Matcher], onFinish: @escaping @MainActor (RedactionJob) -> Void) {
+    /// - Parameters:
+    ///   - writingTo: where to put the copy. Supplied on a Go so that iterating on a plan
+    ///     replaces the same file instead of leaving "redacted 2", "redacted 3" behind.
+    ///   - consultsModelFirst: whether to let the model read the document before redacting.
+    ///     A run driven by a plan does not: the plan already records what the model found,
+    ///     and asking again would quietly reintroduce what the user unticked.
+    public func run(
+        matchers: [any Matcher],
+        writingTo: URL? = nil,
+        consultsModelFirst: Bool = true,
+        onFinish: @escaping @MainActor (RedactionJob) -> Void
+    ) {
         task = Task { [weak self] in
             guard let self else { return }
-            await self.execute(matchers: matchers)
+            await self.execute(
+                matchers: matchers,
+                writingTo: writingTo,
+                consultsModelFirst: consultsModelFirst
+            )
             onFinish(self)
         }
     }
 
-    private func execute(matchers: [any Matcher]) async {
+    private func execute(
+        matchers: [any Matcher],
+        writingTo: URL?,
+        consultsModelFirst: Bool
+    ) async {
         var usesModel = depth.usesModel
         if usesModel {
             if #available(macOS 26.0, *) {
@@ -177,7 +196,8 @@ public final class RedactionJob: Identifiable {
             let outcome = try await redactor.redact(
                 documentAt: source,
                 matchers: matchers,
-                additionalMatches: try await firstPassProposals(usesModel: usesModel),
+                additionalMatches: try await firstPassProposals(usesModel: usesModel && consultsModelFirst),
+                writingTo: writingTo,
                 inspectVisibleText: inspector,
                 progress: sink
             )

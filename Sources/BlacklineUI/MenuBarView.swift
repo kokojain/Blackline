@@ -17,6 +17,17 @@ public struct MenuBarView: View {
                 RunningJobCard(job: job)
             }
 
+            if let reading = model.analysing {
+                ReadingCard(job: reading)
+            }
+
+            if !model.pending.isEmpty {
+                SectionLabel("Ready for you")
+                ForEach(model.pending) { waiting in
+                    PendingPlanCard(waiting: waiting)
+                }
+            }
+
             if let problem = model.lastProblem {
                 ProblemCard(message: problem)
             }
@@ -49,6 +60,9 @@ public struct MenuBarView: View {
             MenuRow(title: "Edit redaction rules…", systemImage: "list.bullet.rectangle", trailing: model.rulesSummary) {
                 NSWorkspace.shared.activateFileViewerSelecting([model.rulesURL])
             }
+            MenuRow(title: "Fine tune…", systemImage: "slider.horizontal.3", trailing: "global rules") {
+                model.editGlobalRules()
+            }
             DepthPicker()
             MenuRow(title: "Quit Blackline", systemImage: "power") {
                 NSApp.terminate(nil)
@@ -69,6 +83,73 @@ private struct SectionLabel: View {
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 11)
             .padding(.top, 4)
+    }
+}
+
+/// A document being read. Nothing is redacted during this phase, and the card says so —
+/// otherwise a long pause looks like redaction happening unsupervised.
+private struct ReadingCard: View {
+    let job: AnalysisJob
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.magnifyingglass").foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(job.sourceURL.lastPathComponent)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .lineLimit(1)
+                    Text("Reading — nothing redacted yet")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Cancel") { job.cancel() }.controlSize(.small)
+            }
+            ProgressView(value: job.fraction).progressViewStyle(.linear)
+            Text(job.phase.label)
+                .font(.system(size: 11.5))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(11)
+        .background(.background, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.hairline))
+    }
+}
+
+/// A document that has been read and is waiting on a decision.
+private struct PendingPlanCard: View {
+    @Environment(AppModel.self) private var model
+    let waiting: PendingPlan
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(waiting.name)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                Text("\(waiting.selectedCount) item\(waiting.selectedCount == 1 ? "" : "s") ticked in \(waiting.planURL.lastPathComponent)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 6) {
+                Button("Go") { model.go(waiting) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(model.current != nil || waiting.selectedCount == 0)
+                Button("Edit plan") { model.editPlan(waiting) }
+                    .controlSize(.small)
+                Spacer()
+                Button("Discard") { model.forget(waiting) }
+                    .controlSize(.small)
+            }
+        }
+        .padding(11)
+        .background(.background, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.hairline))
     }
 }
 

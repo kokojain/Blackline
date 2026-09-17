@@ -32,7 +32,7 @@ let package = Package(
         .testTarget(name: "BlacklineOCRTests", dependencies: ["BlacklineOCR"]),
         .testTarget(
             name: "BlacklineUITests",
-            dependencies: ["BlacklineUI", "BlacklineKit", "BlacklineRedactor"]
+            dependencies: ["BlacklineUI", "BlacklineKit", "BlacklineRedactor", "BlacklineOCR"]
         ),
         .testTarget(
             name: "BlacklineRedactorTests",

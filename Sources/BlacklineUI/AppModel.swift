@@ -107,6 +107,42 @@ public final class CompletedRun: Identifiable {
     }
 }
 
+/// A document that has been read and is waiting for the user to press Go.
+///
+/// The plan beside it is the only thing that decides what a Go removes, so this holds no
+/// findings of its own. `outputURL` is remembered after the first Go so that later ones
+/// replace the same file rather than accumulating copies.
+@MainActor
+@Observable
+public final class PendingPlan: Identifiable {
+    public let id = UUID()
+    public let sourceURL: URL
+    public let planURL: URL
+    public internal(set) var outputURL: URL?
+    public let modelFailedPages: [Int]
+    public let modelUnavailable: String?
+
+    public init(
+        sourceURL: URL,
+        planURL: URL,
+        modelFailedPages: [Int] = [],
+        modelUnavailable: String? = nil
+    ) {
+        self.sourceURL = sourceURL
+        self.planURL = planURL
+        self.modelFailedPages = modelFailedPages
+        self.modelUnavailable = modelUnavailable
+    }
+
+    public var name: String { sourceURL.lastPathComponent }
+
+    public var plan: DocumentPlan? { DocumentPlan.load(for: sourceURL) }
+
+    /// How many items the plan will remove as it currently stands, re-read each time so the
+    /// count follows edits made outside the app.
+    public var selectedCount: Int { plan?.selectedValues.count ?? 0 }
+}
+
 /// App-wide state: the queue, the running job, finished runs, and settings.
 @MainActor
 @Observable
@@ -119,7 +155,16 @@ public final class AppModel {
         didSet { UserDefaults.standard.set(rulesURL.path, forKey: "rulesURL") }
     }
 
+    /// Free-form guidance for the model, edited through "Fine tune…".
+    public var globalRulesURL: URL {
+        didSet { UserDefaults.standard.set(globalRulesURL.path, forKey: "globalRulesURL") }
+    }
+
     public private(set) var current: RedactionJob?
+    /// The document being read, before any plan exists.
+    public private(set) var analysing: AnalysisJob?
+    /// Documents read and waiting for a Go.
+    public private(set) var pending: [PendingPlan] = []
     public private(set) var queue: [URL] = []
     public private(set) var runs: [CompletedRun] = []
     /// Set when a run could not start or produced nothing, for the menu bar to show.
@@ -136,6 +181,28 @@ public final class AppModel {
         } else {
             rulesURL = URL(fileURLWithPath: NSString(string: "~/Documents/redact.txt").expandingTildeInPath)
         }
+        if let saved = defaults.string(forKey: "globalRulesURL") {
+            globalRulesURL = URL(fileURLWithPath: saved)
+        } else {
+            globalRulesURL = URL(fileURLWithPath: NSString(string: "~/Documents/globalrules.md").expandingTildeInPath)
+        }
+    }
+
+    /// Opens the global rules for editing, creating them from the starter text on first use.
+    public func editGlobalRules() {
+        if !FileManager.default.fileExists(atPath: globalRulesURL.path) {
+            try? GlobalRules.starter.write(to: globalRulesURL, atomically: true, encoding: .utf8)
+        }
+        NSWorkspace.shared.open(globalRulesURL)
+    }
+
+    public func editPlan(_ pending: PendingPlan) {
+        NSWorkspace.shared.open(pending.planURL)
+    }
+
+    public func forget(_ pending: PendingPlan) {
+        DocumentPlan.delete(for: pending.sourceURL)
+        self.pending.removeAll { $0.id == pending.id }
     }
 
     public var rulesSummary: String {
@@ -157,77 +224,126 @@ public final class AppModel {
 
     public func enqueue(_ urls: [URL]) {
         queue.append(contentsOf: urls.filter { $0.pathExtension.lowercased() == "pdf" })
-        startNextIfIdle()
+        startNextAnalysisIfIdle()
     }
 
     public func chooseFiles() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.pdf]
         panel.allowsMultipleSelection = true
-        panel.message = "Choose PDFs to redact. The originals are never modified."
+        panel.message = "Choose PDFs to read. Nothing is redacted until you review the plan."
         NSApp.activate(ignoringOtherApps: true)
         if panel.runModal() == .OK { enqueue(panel.urls) }
     }
 
     public func cancelCurrent() {
         current?.cancel()
+        analysing?.cancel()
     }
 
-    private func startNextIfIdle() {
-        guard current == nil, !queue.isEmpty else { return }
+    /// Reads the next document and writes its plan. Redacts nothing.
+    private func startNextAnalysisIfIdle() {
+        guard analysing == nil, current == nil, !queue.isEmpty else { return }
+        guard let rules = loadRules() else { return }
+
         let url = queue.removeFirst()
+        let built = MatcherFactory().makeMatchers(for: rules.ruleSet)
+        let job = AnalysisJob(sourceURL: url)
+        analysing = job
+        lastProblem = nil
 
-        let parsed: RulesParser.Result
-        do {
-            parsed = try RulesParser().parse(contentsOf: rulesURL)
-        } catch let error as RulesParser.FileError {
-            lastProblem = error.errorDescription
-            return
-        } catch {
-            lastProblem = "Could not read \(rulesURL.lastPathComponent)."
+        job.run(
+            matchers: built.matchers,
+            wanted: rules.ruleSet.categories.map(\.canonicalName),
+            guidance: GlobalRules.load(from: globalRulesURL).guidance,
+            usesModel: depth.usesModel,
+            globalRulesPath: globalRulesURL.path
+        ) { [weak self] finished in
+            guard let self else { return }
+            if case .finished(let planURL) = finished.phase {
+                let waiting = PendingPlan(
+                    sourceURL: finished.sourceURL,
+                    planURL: planURL,
+                    modelFailedPages: finished.modelFailedPages,
+                    modelUnavailable: finished.modelUnavailable
+                )
+                self.pending.append(waiting)
+                // The plan is the whole point of this phase, so it opens for editing rather
+                // than waiting to be found.
+                NSWorkspace.shared.open(planURL)
+                Notifier.post(
+                    title: finished.sourceURL.lastPathComponent,
+                    body: "Read and described in \(planURL.lastPathComponent). Nothing redacted yet — review it and press Go.",
+                    reveal: planURL
+                )
+            } else if case .failed(let message) = finished.phase {
+                self.lastProblem = message
+            }
+            self.analysing = nil
+            self.startNextAnalysisIfIdle()
+        }
+    }
+
+    /// Redacts a document according to its plan, replacing any copy an earlier Go produced.
+    public func go(_ waiting: PendingPlan) {
+        guard current == nil, analysing == nil else { return }
+        guard let rules = loadRules() else { return }
+
+        guard let plan = DocumentPlan.load(for: waiting.sourceURL), !plan.isEmpty else {
+            lastProblem = "\(waiting.planURL.lastPathComponent) has nothing ticked, so nothing would be removed."
             return
         }
 
-        // Spec §3: a run with nothing to match could only produce an identical copy, which
-        // is a privacy failure rather than a success. Refuse before starting.
-        guard !parsed.ruleSet.isEmpty else {
-            lastProblem = "\(rulesURL.lastPathComponent) has no usable rules, so nothing would be redacted."
-            return
-        }
+        // The plan decides, not the detectors: an item the user unticked must stay in the
+        // document however confidently it was found.
+        let matchers: [any Matcher] = plan.selectedValues.map { ExactTextMatcher(literal: $0) }
 
-        let built = MatcherFactory().makeMatchers(for: parsed.ruleSet)
-        // The model is told to look for exactly what the rules ask for. Without this it
-        // decides for itself and blacks out every dollar figure on a tax return.
         let job = RedactionJob(
-            sourceURL: url,
+            sourceURL: waiting.sourceURL,
             depth: depth,
-            wantedCategories: parsed.ruleSet.categories.map(\.canonicalName)
+            wantedCategories: rules.ruleSet.categories.map(\.canonicalName)
         )
         current = job
         lastProblem = nil
 
-        job.run(matchers: built.matchers) { [weak self] finished in
+        job.run(
+            matchers: matchers,
+            writingTo: waiting.outputURL,
+            consultsModelFirst: false
+        ) { [weak self] finished in
             guard let self else { return }
             if let result = finished.result {
+                waiting.outputURL = result.outputURL
                 let completed = CompletedRun(
                     sourceURL: finished.sourceURL,
                     result: result,
                     depth: finished.depth,
-                    modelUnavailable: finished.modelUnavailable,
-                    modelFailedPages: finished.modelFailedPages,
+                    modelUnavailable: finished.modelUnavailable ?? waiting.modelUnavailable,
+                    modelFailedPages: waiting.modelFailedPages,
                     modelReadBackFailures: finished.modelReadBackFailures,
-                    unsupportedCategories: built.unsupportedCategories
+                    unsupportedCategories: []
                 )
+                self.runs.removeAll { $0.sourceURL == finished.sourceURL }
                 self.runs.insert(completed, at: 0)
                 self.notify(completed)
-                // The copy appears as §3 promises, and the review opens on top of it: the
-                // risk is not the file existing, it is the file being sent unexamined.
                 self.reviewToOpen = completed.id
             } else if case .failed(let message) = finished.phase {
                 self.lastProblem = message
             }
             self.current = nil
-            self.startNextIfIdle()
+        }
+    }
+
+    private func loadRules() -> RulesParser.Result? {
+        do {
+            let parsed = try RulesParser().parse(contentsOf: rulesURL)
+            return parsed
+        } catch let error as RulesParser.FileError {
+            lastProblem = error.errorDescription
+            return nil
+        } catch {
+            lastProblem = "Could not read \(rulesURL.lastPathComponent)."
+            return nil
         }
     }
 

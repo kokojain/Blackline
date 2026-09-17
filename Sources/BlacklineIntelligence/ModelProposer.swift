@@ -85,11 +85,12 @@ public struct ModelProposer: Sendable {
     /// is the statement of intent, so the model is asked to honour it.
     public func proposals(
         forPage pageText: String,
-        wanted: [String] = []
+        wanted: [String] = [],
+        guidance: String = ""
     ) async throws -> [Proposal] {
         try await ask(
             pageText,
-            instructions: Self.instructions(wanted: wanted),
+            instructions: Self.instructions(wanted: wanted, guidance: guidance),
             prompt: Self.prompt
         )
         .filter { !ProposalFilter.isNotIdentifying($0.text) }
@@ -176,7 +177,7 @@ public struct ModelProposer: Sendable {
 
     // MARK: - Prompting
 
-    private static func instructions(wanted: [String]) -> String {
+    private static func instructions(wanted: [String], guidance: String = "") -> String {
         let scope: String
         if wanted.isEmpty {
             scope = """
@@ -191,12 +192,23 @@ public struct ModelProposer: Sendable {
                 """
         }
 
+        // The user's own standing instructions, from globalrules.md. Placed after the scope
+        // so it can refine what to look for, and before the prohibitions so it cannot talk
+        // the model into reporting money.
+        let standing = guidance.isEmpty ? "" : """
+
+
+            The person who owns this document has also told you:
+
+            \(guidance)
+            """
+
         return """
             You find personal information in documents so that it can be permanently redacted.
 
             You will be shown text extracted from one page of a document.
 
-            \(scope)
+            \(scope)\(standing)
 
             Never report money. Dollar amounts, totals, subtotals, balances, wages, \
             percentages, box numbers, line-item numbers, dates that are not dates of birth, \

@@ -253,6 +253,7 @@ public struct PDFRedactor: Sendable {
         documentAt sourceURL: URL,
         matchers: [any Matcher],
         additionalMatches: [Int: [Match]] = [:],
+        writingTo requestedURL: URL? = nil,
         inspectVisibleText: VisibleTextInspector? = nil,
         progress: ProgressHandler? = nil
     ) async throws -> Result {
@@ -394,7 +395,16 @@ public struct PDFRedactor: Sendable {
         guard output.write(to: candidate) else { throw Failure.writeFailed }
 
         let problems = unresolved + (try verify(candidate, matchers: matchers))
-        let destination = Self.outputURL(for: sourceURL)
+
+        // A run started from a plan replaces that plan's output, so iterating on the plan
+        // does not leave "redacted 2", "redacted 3" behind. §3's promise not to overwrite
+        // still holds for everything else: only Blackline's own output for this document is
+        // ever replaced, and never the original.
+        let destination = requestedURL ?? Self.outputURL(for: sourceURL)
+        guard destination != sourceURL else {
+            try? FileManager.default.removeItem(at: candidate)
+            throw Failure.writeFailed
+        }
 
         // Nothing to report: the ordinary, verified path.
         if !problems.isEmpty, !holdsUnverifiedOutputForReview {
@@ -403,7 +413,11 @@ public struct PDFRedactor: Sendable {
         }
 
         do {
-            try FileManager.default.moveItem(at: candidate, to: destination)
+            if requestedURL != nil, FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: candidate)
+            } else {
+                try FileManager.default.moveItem(at: candidate, to: destination)
+            }
         } catch {
             try? FileManager.default.removeItem(at: candidate)
             throw Failure.writeFailed

@@ -297,12 +297,9 @@ names, dates of birth. In Deep runs the model covers these in practice;
 `MatcherFactory.unsupportedCategories` reports them so a run never implies it checked
 something it did not.
 
-## The Go loop — designed, not yet built
+## The Go loop
 
-This section describes agreed behaviour that **is not in the code yet**. Everything else in
-this file describes what exists. Do not read the two as one.
-
-Redaction becomes a loop the user drives, rather than one shot followed by a review:
+Redaction is a loop the user drives, rather than one shot followed by a review:
 
 ```
 Redact a PDF…
@@ -349,23 +346,28 @@ plan writes to that plan's output path and replaces it. The §3 promise not to o
 still holds for everything else: the first run picks a free name, and only Blackline's own
 output for this document is ever replaced.
 
-### What this changes in the code
+### How it hangs together
 
-- `RedactionJob` gains phases: analysing → awaiting the plan → redacting. The first phase
-  produces no PDF at all, so the job model can no longer assume a run ends in a file.
-- A `DocumentPlan` type reads and writes `<document>.md`, and is the single source of what a
-  Go will remove. The model's proposals become its first draft, not a direct input to
-  redaction.
-- `PDFRedactor` needs to write to a given URL rather than always choosing a free one.
-- `ModelProposer` takes the prose from `globalrules.md` alongside the categories it already
-  receives.
-- The menu gains **Fine tune…**; the review window gains **Edit plan** and **Go**.
+`AnalysisJob` reads a document and writes its plan; it redacts nothing, so a run no longer
+always ends in a file. `DocumentPlan` reads and writes `<document>.md` and is the single
+source of what a Go removes — detectors and the model write the first draft, and after that
+the file decides. `AppModel.go(_:)` turns the ticked values into `ExactTextMatcher`s, which
+is what makes an untick stick: the detectors do not get a second say.
 
-### Still open
+A Go passes `writingTo:` so the copy replaces the one the last Go made. `ModelProposer`
+takes the prose from `globalrules.md` as `guidance`, placed after the scope it was given and
+before the prohibitions, so standing instructions can refine what to look for but cannot
+talk the model into reporting money.
 
-Whether a plan edited by hand should survive the next analysis of the same document, or be
-regenerated. Keeping it means the user's decisions persist; regenerating it means a changed
-document is described accurately. Probably: keep the user's ticks, re-scan for anything new.
+Re-reading a document keeps the decisions already made: `DocumentPlan.merged(with:)` carries
+ticks across, keeps lines typed by hand, and brings anything new in ticked — so a document
+that has changed is still described accurately without discarding the user's judgement.
+
+**Verifying a plan-driven run cannot be done by searching the file's bytes.** A redacted
+page is rasterized, so its text layer is gone whether a value was covered or left alone;
+byte-searching cannot tell "removed" from "still there in the picture". The tests read the
+finished page back with `PageOCR` instead, which is the only check that can tell the
+difference.
 
 ## Architecture (spec §6)
 
