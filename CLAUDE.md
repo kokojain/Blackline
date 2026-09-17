@@ -278,24 +278,94 @@ everywhere and reusable by any future proposer.
 
 ### Implementation status
 
-Built: rules parsing (§4) and the matching layer (§5.3) — `RulesParser`, `SourceText`
-normalization, and `ExactTextMatcher`, `SSNMatcher`, `CreditCardMatcher`,
-`AccountNumberMatcher` behind the `Matcher` protocol.
+**Built.** Rules parsing (§4). The matcher layer (§5.3): exact matches plus SSN, EIN,
+credit card, account, passport and driver's licence. `SourceText` normalization. Vision text
+recognition (`BlacklineOCR`), used to place redaction boxes and to read rendered pages back.
+Redaction with rasterization (§5.4), metadata scrubbing (§5.5) and the verification pass
+(§5.6), with the render-and-read-back loop on top. The on-device model tier. Two CLIs,
+`blackline-preview` and `blackline-redact`. The app: menu bar, background job queue with
+progress and cancellation, notifications, and the review window.
 
-Also built: `blackline-preview`, a read-only CLI that extracts text with PDFKit and reports
-matches per page; and the tier-3 model proposer behind `--llm`.
+**Not built.** Content-stream surgery, so redacted pages lose selectable text. OCR-based
+*detection*: recognition is used for placement and verification, but a page with no text
+layer is still copied through unexamined rather than read. Encrypted-PDF passwords. The
+Finder service, Share extension and App Intent. The rules editor and "add rules from this
+document". The Go loop described below.
 
-Also built: redaction with rasterization (§5.4), metadata scrubbing (§5.5), and the
-verification pass (§5.6), driven by `blackline-redact`.
+**Categories with no detector:** email addresses, phone numbers, street addresses, person
+names, dates of birth. In Deep runs the model covers these in practice;
+`MatcherFactory.unsupportedCategories` reports them so a run never implies it checked
+something it did not.
 
-Not built yet: OCR (§5.2), so scanned pages are copied through unexamined; content-stream
-surgery, so redacted pages lose selectable text; encrypted-PDF password handling; and the
-whole app layer — no menu bar app, Finder service, Share extension, or App Intent.
+## The Go loop — designed, not yet built
 
-Category detectors for email addresses, phone numbers, street addresses, person names, and
-dates of birth are also still missing — they need `NSDataDetector` and NaturalLanguage.
-`MatcherFactory` reports these through `unsupportedCategories` rather than passing them
-over silently.
+This section describes agreed behaviour that **is not in the code yet**. Everything else in
+this file describes what exists. Do not read the two as one.
+
+Redaction becomes a loop the user drives, rather than one shot followed by a review:
+
+```
+Redact a PDF…
+  ↓   the model reads it (~10s/page)
+<document>.md  — the plan, opened for editing. Nothing redacted yet.
+  ↓   edit it, press Go
+<document> redacted.pdf   + the review window
+  ↓   edit the plan again, press Go
+<document> redacted.pdf   — the same file, replaced
+```
+
+### Three files
+
+| File | Who reads it | What it is |
+|---|---|---|
+| `redact.txt` | the detectors | unchanged: the §4 grammar, quoted literals and categories |
+| `globalrules.md` | the model | free-form prose, applying to every document |
+| `<document>.md` | both | this document's plan: what was found, and what to remove |
+
+They stay separate on purpose. `redact.txt`'s grammar is what drives the regex detectors —
+SSN, EIN, card, account — which run without the model, give the same answer twice, and are
+the floor the read-back verification checks against. Prose can only instruct the model.
+Folding one into the other would put everything at the mercy of the model.
+
+`globalrules.md` is reached from **Fine tune…** in the menu bar; `<document>.md` from the
+run it belongs to.
+
+### `<document>.md` holds personal information in the clear
+
+It lists the values found — the SSNs, the EINs, the names — and sits beside the source PDF,
+which is what makes it easy to edit and easy to keep with the document. It is also a
+plaintext index of exactly what the user is protecting, in the folder they are about to
+share from, where Spotlight will index it and a backup will copy it. This was a deliberate
+choice, taken knowing that. What follows from it:
+
+- The app must say so where the file is offered, not bury it.
+- Deleting the plan must be one action from the review window, next to deleting the copy.
+- It must never be written anywhere the user did not put the original.
+
+### Each Go replaces the same file
+
+Iterating must not leave `redacted 2.pdf`, `redacted 3.pdf` behind. A run started from a
+plan writes to that plan's output path and replaces it. The §3 promise not to overwrite
+still holds for everything else: the first run picks a free name, and only Blackline's own
+output for this document is ever replaced.
+
+### What this changes in the code
+
+- `RedactionJob` gains phases: analysing → awaiting the plan → redacting. The first phase
+  produces no PDF at all, so the job model can no longer assume a run ends in a file.
+- A `DocumentPlan` type reads and writes `<document>.md`, and is the single source of what a
+  Go will remove. The model's proposals become its first draft, not a direct input to
+  redaction.
+- `PDFRedactor` needs to write to a given URL rather than always choosing a free one.
+- `ModelProposer` takes the prose from `globalrules.md` alongside the categories it already
+  receives.
+- The menu gains **Fine tune…**; the review window gains **Edit plan** and **Go**.
+
+### Still open
+
+Whether a plan edited by hand should survive the next analysis of the same document, or be
+regenerated. Keeping it means the user's decisions persist; regenerating it means a changed
+document is described accurately. Probably: keep the user's ticks, re-scan for anything new.
 
 ## Architecture (spec §6)
 
