@@ -14,8 +14,7 @@ struct BlacklineApp: App {
             MenuBarView()
                 .environment(model)
         } label: {
-            // Monochrome template artwork, the way the menu bar expects.
-            Image(systemName: model.current == nil ? "square.text.square" : "square.text.square.fill")
+            Image.blacklineMenuBar(working: model.current != nil)
         }
         .menuBarExtraStyle(.window)
 

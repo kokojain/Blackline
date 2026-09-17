@@ -438,4 +438,68 @@ struct UnverifiedOutputTests {
         )
     }
 }
+
+@MainActor
+@Suite("Menu bar icon")
+struct MenuBarIconTests {
+
+    // A template image renders as one flat colour that inverts with the menu bar, which
+    // would make the page and the bar the same shade and lose the idea entirely.
+    @Test("The icon keeps its own colours")
+    func notATemplate() {
+        #expect(MenuBarIcon.image(working: false).isTemplate == false)
+        #expect(MenuBarIcon.image(working: true).isTemplate == false)
+    }
+
+    @Test("It is sized for the menu bar and described for VoiceOver")
+    func sizeAndLabel() {
+        let idle = MenuBarIcon.image(working: false)
+        #expect(idle.size == MenuBarIcon.size)
+        #expect(idle.accessibilityDescription == "Blackline")
+        #expect(MenuBarIcon.image(working: true).accessibilityDescription == "Blackline — redacting")
+    }
+
+    @Test("It really is a white page with a black bar")
+    func whitePageBlackBar() throws {
+        let image = MenuBarIcon.image(working: false)
+        let bitmap = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 36, pixelsHigh: 36,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        image.draw(in: NSRect(x: 0, y: 0, width: 36, height: 36))
+        NSGraphicsContext.restoreGraphicsState()
+
+        // Middle of the page: the redaction bar.
+        let bar = try #require(bitmap.colorAt(x: 18, y: 18))
+        #expect(bar.brightnessComponent < 0.25)
+
+        // Above it, page body.
+        let body = try #require(bitmap.colorAt(x: 18, y: 9))
+        #expect(body.brightnessComponent > 0.75)
+        #expect(body.alphaComponent > 0.9)
+    }
+
+    @Test("The working state differs from the idle one", .enabled(if: snapshotsEnabled))
+    func statesDiffer() throws {
+        func png(_ working: Bool, _ name: String) throws -> Data {
+            let image = MenuBarIcon.image(working: working)
+            let scaled = NSImage(size: NSSize(width: 144, height: 144))
+            scaled.lockFocus()
+            NSColor(white: 0.93, alpha: 1).setFill()
+            NSRect(x: 0, y: 0, width: 144, height: 144).fill()
+            image.draw(in: NSRect(x: 0, y: 0, width: 144, height: 144))
+            scaled.unlockFocus()
+            let data = try #require(scaled.tiffRepresentation)
+            let png = try #require(NSBitmapImageRep(data: data)?.representation(using: .png, properties: [:]))
+            try png.write(to: ReviewSnapshotTests.outputDirectory.appendingPathComponent(name))
+            return png
+        }
+        let idle = try png(false, "menubar-icon-idle.png")
+        let working = try png(true, "menubar-icon-working.png")
+        #expect(idle != working)
+    }
+}
 }
