@@ -75,6 +75,11 @@ public struct PageReading: Sendable {
             }
         }
 
+        // A value that wrapped is on no single line, so the search above cannot find it.
+        if boxes.isEmpty {
+            boxes = boxesAcrossLines(covering: needle)
+        }
+
         // Recognition misreads digits in some fonts — "12-3456789" comes back as
         // "12-3456/89" — at full confidence, so neither an exact search nor a confidence
         // threshold finds it. The line's own geometry stays correct even when its
@@ -83,6 +88,108 @@ public struct PageReading: Sendable {
             boxes = approximateBoxes(covering: needle)
         }
         return boxes
+    }
+
+    /// Boxes for a value printed across consecutive lines, one box per line.
+    ///
+    /// A postal address is set over two or three rows, so the value a matcher reports spans
+    /// them — and searching a single line's text can never find it. What the caller does
+    /// without this is fall back to PDFKit's geometry, which on a form covers the whole row:
+    /// redacting an employee's address took the `Employee:` label, the SSN caption and the
+    /// row's remaining columns with it, and three lines of a W-2 became one black slab. That
+    /// is the over-redaction that ruins a document.
+    ///
+    /// The structure that makes exact placement possible: a value that wrapped **ends at the
+    /// end of one line and resumes at the start of the next**. So the first piece must be a
+    /// suffix of its line's words, any middle line must be consumed whole, and the last piece
+    /// must be a prefix of its line's words. Nothing else is accepted, which is what keeps
+    /// this from matching a scatter of words down the page.
+    func boxesAcrossLines(covering needle: String) -> [CGRect] {
+        let wanted = Self.normalize(needle).split(separator: " ").map(String.init)
+        guard wanted.count >= 2 else { return [] }
+
+        for start in lines.indices {
+            let words = self.words(of: lines[start])
+            guard !words.isEmpty else { continue }
+
+            // The first piece has to reach the end of its line: a wrapped value cannot have
+            // unrelated text after it on the same row.
+            for first in words.indices {
+                let head = words.count - first
+                guard head < wanted.count,
+                      matches(wanted.prefix(head), words[first...])
+                else { continue }
+
+                var boxes = [box(of: words[first...])]
+                var consumed = head
+                var line = start + 1
+
+                while consumed < wanted.count, line < lines.count {
+                    let next = self.words(of: lines[line])
+                    guard !next.isEmpty else { break }
+                    let remaining = wanted.count - consumed
+
+                    if remaining <= next.count {
+                        // The tail: it must start this line, and may end inside it.
+                        guard matches(wanted.suffix(remaining), next.prefix(remaining)) else { break }
+                        boxes.append(box(of: next.prefix(remaining)))
+                        return boxes
+                    }
+
+                    // A middle line is consumed whole or not at all.
+                    guard matches(wanted[consumed ..< consumed + next.count], next[...]) else { break }
+                    boxes.append(box(of: next[...]))
+                    consumed += next.count
+                    line += 1
+                }
+            }
+        }
+        return []
+    }
+
+    private typealias Word = (text: String, box: CGRect)
+
+    private func words(of line: RecognizedLine) -> [Word] {
+        line.tokens.map { (Self.normalize(String(line.text[$0.range])), $0.box) }
+            .filter { !$0.0.isEmpty }
+    }
+
+    private func box(of words: ArraySlice<Word>) -> CGRect {
+        words.dropFirst().reduce(words.first?.box ?? .null) { $0.union($1.box) }
+    }
+
+    /// Word-by-word comparison, allowing the misreads recognition makes within a word —
+    /// `02210` comes back as `0Z210`. A word must be the same length and nearly the same
+    /// characters; a quarter of them may differ, and never more than two.
+    private func matches(_ wanted: ArraySlice<String>, _ found: ArraySlice<Word>) -> Bool {
+        guard wanted.count == found.count else { return false }
+        for (want, have) in zip(wanted, found) {
+            if want == have.text { continue }
+            guard want.count == have.text.count else { return false }
+            let tolerance = min(2, want.count / 4)
+            var mismatches = 0
+            for (expected, actual) in zip(want, have.text) where expected != actual {
+                guard Self.isRecognitionArtefact(expected: expected, found: actual) else {
+                    return false
+                }
+                mismatches += 1
+            }
+            guard mismatches <= tolerance else { return false }
+        }
+        return true
+    }
+
+    /// Whether a character that differs is recognition misreading the page, or the page
+    /// genuinely saying something else.
+    ///
+    /// Vision substitutes a letter or a symbol for a digit: `0Z210` for `02210`,
+    /// `12-3456/89` for `12-3456789`. That is what the approximate paths exist to absorb.
+    /// It does **not** turn one digit into another — so where both characters are digits and
+    /// they differ, the text on the page is a different number. Measured on a W-2: without
+    /// this, the employee's `Boston MA 02210` also blacked out the employer's
+    /// `Boston MA 02110`, one line below.
+    static func isRecognitionArtefact(expected: Character, found: Character) -> Bool {
+        !(expected.isNumber && found.isNumber)
     }
 
     /// Finds `needle` allowing for misrecognized characters, and returns the box around the
@@ -105,11 +212,22 @@ public struct PageReading: Sendable {
             var bestMismatches = tolerance + 1
             for start in 0 ... (characters.count - wanted.count) {
                 var mismatches = 0
-                for offset in 0 ..< wanted.count where characters[start + offset] != wanted[offset] {
+                var differentValue = false
+                for offset in 0 ..< wanted.count
+                where characters[start + offset] != wanted[offset] {
+                    // One digit standing where another was wanted is not a misread: it is a
+                    // different number, and covering it removes something nobody asked to
+                    // remove. See ``isRecognitionArtefact``.
+                    guard Self.isRecognitionArtefact(
+                        expected: wanted[offset], found: characters[start + offset]
+                    ) else {
+                        differentValue = true
+                        break
+                    }
                     mismatches += 1
                     if mismatches >= bestMismatches { break }
                 }
-                if mismatches < bestMismatches {
+                if !differentValue, mismatches < bestMismatches {
                     bestMismatches = mismatches
                     bestStart = start
                 }

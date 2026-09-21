@@ -16,7 +16,15 @@ public struct DocumentPlan: Equatable, Sendable {
     public struct Item: Equatable, Hashable, Sendable {
         /// Ticked items are removed; unticked ones are deliberately left in place.
         public var isSelected: Bool
-        /// The text to remove, exactly as it appears in the document.
+        /// The text to remove.
+        ///
+        /// Held as a single line, normalized the way ``SourceText`` normalizes page text.
+        /// A postal address matches across the line break the form printed it on, so the
+        /// raw matched text arrives here carrying a newline — written straight out it ends
+        /// the item's markdown line halfway through, and the plan loses both that value and
+        /// the remainder of the line. Normalizing is also what keeps the value *usable*:
+        /// ``ExactTextMatcher`` normalizes its needle identically, so the single-line form
+        /// still finds the wrapped original on the page.
         public var value: String
         /// What found it, or what it is — free text, for the reader's benefit only.
         public var label: String
@@ -25,8 +33,8 @@ public struct DocumentPlan: Equatable, Sendable {
 
         public init(isSelected: Bool = true, value: String, label: String = "", page: Int? = nil) {
             self.isSelected = isSelected
-            self.value = value
-            self.label = label
+            self.value = SourceText.normalize(value)
+            self.label = label.split(whereSeparator: \.isNewline).joined(separator: " ")
             self.page = page
         }
     }
@@ -39,13 +47,41 @@ public struct DocumentPlan: Equatable, Sendable {
         self.items = items
     }
 
+    /// The shortest a ticked value may be and still be used.
+    ///
+    /// A plan value becomes an ``ExactTextMatcher``, which is a substring search by §4's
+    /// design, so a one- or two-character value asks for every occurrence of those
+    /// characters in the document rather than for an identifier. Nothing that short is an
+    /// identifier, and a plan can pick one up from a model proposal or a slip of the
+    /// keyboard.
+    public static let minimumValueLength = 3
+
     /// What a Go should remove.
     public var selectedValues: [String] {
+        tickedValues.usable
+    }
+
+    /// Ticked values that will not be used, because nothing that short can be an identifier.
+    /// A caller that drops them has to say so.
+    public var refusedValues: [String] {
+        tickedValues.refused
+    }
+
+    private var tickedValues: (usable: [String], refused: [String]) {
         var seen: Set<String> = []
-        return items
-            .filter(\.isSelected)
-            .map(\.value)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty && seen.insert($0).inserted }
+        var usable: [String] = []
+        var refused: [String] = []
+        for value in items.filter(\.isSelected).map(\.value) {
+            let trimmed = value.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, seen.insert(value).inserted else { continue }
+            if trimmed.count >= Self.minimumValueLength,
+               trimmed.contains(where: { $0.isLetter || $0.isNumber }) {
+                usable.append(value)
+            } else {
+                refused.append(value)
+            }
+        }
+        return (usable, refused)
     }
 
     public var isEmpty: Bool { selectedValues.isEmpty }
@@ -58,14 +94,20 @@ public struct DocumentPlan: Equatable, Sendable {
     // MARK: - Writing
 
     public func markdown(globalRulesPath: String?) -> String {
+        let ticked = items.count(where: \.isSelected)
         var out = """
         # Redaction plan — \(sourceName)
 
-        Tick an item to remove it, untick to leave it in the document, and add your own
-        lines in the same shape. Then press Go in Blackline.
+        **\(ticked) of \(items.count) line\(items.count == 1 ? "" : "s") \
+        \(ticked == 1 ? "is" : "are") ticked.** Blackline removes the ticked values and \
+        nothing else on the page.
 
-        > **This file lists the values found in the document, in full.** It is as sensitive
-        > as the document itself. Delete it when you are done.
+        - `- [x]` remove this value  ·  `- [ ]` leave it in the document
+        - Add a line of your own in the same shape to remove something not listed.
+        - Save the file, then press **Go**.
+
+        > **This file lists the values in full, so it is as sensitive as the document
+        > itself.** Delete it when you are done — the review window has a button for it.
 
         """
 

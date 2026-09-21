@@ -20,9 +20,12 @@ struct MatcherFactoryTests {
         social security numbers
         credit card numbers
         account numbers
+        email addresses
+        phone numbers
+        street addresses
         """).ruleSet
         let output = factory.makeMatchers(for: ruleSet)
-        #expect(output.matchers.count == 3)
+        #expect(output.matchers.count == 6)
         #expect(output.unsupportedCategories.isEmpty)
     }
 
@@ -31,17 +34,26 @@ struct MatcherFactoryTests {
     @Test("Reports categories that have no detector yet")
     func reportsUnsupportedCategories() {
         let ruleSet = parser.parse("""
-        email addresses
-        phone numbers
-        street addresses
         person names
         dates of birth
         """).ruleSet
         let output = factory.makeMatchers(for: ruleSet)
-        #expect(output.matchers.isEmpty)
-        #expect(output.unsupportedCategories == [
-            .emailAddresses, .phoneNumbers, .streetAddresses, .personNames, .datesOfBirth,
-        ])
+        #expect(output.matchers.count == 1)
+        #expect(output.unsupportedCategories == [.personNames])
+    }
+
+    @Test("Builds detectors for the categories added for the synthetic corpus")
+    func buildsCorpusCategories() {
+        let ruleSet = parser.parse("""
+        dates of birth
+        secrets
+        ip addresses
+        health information
+        employee ids
+        """).ruleSet
+        let output = factory.makeMatchers(for: ruleSet)
+        #expect(output.matchers.count == 5)
+        #expect(output.unsupportedCategories.isEmpty)
     }
 
     @Test("Forwards the unlabeled-digit-run option to the account matcher")
@@ -65,11 +77,18 @@ struct MatcherFactoryTests {
         social security numbers
         credit card numbers
         account numbers
+        email addresses
+        phone numbers
+        street addresses
         """).ruleSet
 
         let page = SourceText("""
         Prepared for Nikhil of Knob
         LLC. SSN 123-45-6789.
+        88 Harbor St Apt 4B
+        Boston MA 02210
+        nikhil@knob-llc.example
+        Phone (617) 555-0148
         Account Number
         000123456789
         Card on file 4417-XXXX-XXXX-9803
@@ -85,13 +104,18 @@ struct MatcherFactoryTests {
         #expect(matches.contains { $0.matchedText == "000123456789" })     // label above value
         #expect(matches.contains { $0.matchedText == "4417-XXXX-XXXX-9803" })
         #expect(matches.contains { $0.matchedText == "4111 1111 1111 1111" })
+        #expect(matches.contains { $0.matchedText == "88 Harbor St Apt 4B\nBoston MA 02210" })
+        #expect(matches.contains { $0.matchedText == "nikhil@knob-llc.example" })
+        #expect(matches.contains { $0.matchedText == "(617) 555-0148" })
 
-        // Seven, not six: "Backup card 4111…" is flagged by both the credit card matcher
+        // Eleven, not nine: "Backup card 4111…" is flagged by both the credit card matcher
         // (Luhn) and the account matcher ("card" is an account label). Matchers are
         // independent by contract, and keeping "card" in the account vocabulary is what
         // catches non-Luhn store and loyalty numbers. Merging overlapping spans — and
         // reconciling the §3 "items redacted" count — belongs to the redaction stage.
-        #expect(matches.count == 7)
+        // and the "Nikhil" rule matches twice — once in the prose, once inside the email
+        // address, which is the case-insensitive literal doing exactly what it should.
+        #expect(matches.count == 11)
         let visaSources = Set(
             matches.filter { $0.matchedText == "4111 1111 1111 1111" }.map(\.source)
         )

@@ -16,6 +16,10 @@ public enum Category: String, CaseIterable, Hashable, Sendable {
     case employerIdentificationNumbers
     case passportNumbers
     case driversLicenseNumbers
+    case secrets
+    case ipAddresses
+    case healthInformation
+    case employeeIdentifiers
 
     /// The spelling used when echoing a category back to the user.
     public var canonicalName: String {
@@ -31,6 +35,10 @@ public enum Category: String, CaseIterable, Hashable, Sendable {
         case .employerIdentificationNumbers: "employer identification numbers"
         case .passportNumbers: "passport numbers"
         case .driversLicenseNumbers: "driver's license numbers"
+        case .secrets: "secrets"
+        case .ipAddresses: "ip addresses"
+        case .healthInformation: "health information"
+        case .employeeIdentifiers: "employee ids"
         }
     }
 
@@ -79,6 +87,23 @@ public enum Category: String, CaseIterable, Hashable, Sendable {
              "driving licence numbers", "driving licence number",
              "driver's licenses", "drivers licenses", "license numbers", "license number",
              "licence numbers", "licence number", "dl numbers", "dl number"]
+        case .secrets:
+            ["secrets", "secret", "credentials", "credential", "passwords", "password",
+             "api keys", "api key", "access tokens", "access token", "tokens", "token",
+             "private keys", "private key", "secret keys", "secret key"]
+        case .ipAddresses:
+            ["ip addresses", "ip address", "ips", "ip", "ipv4 addresses", "ipv6 addresses",
+             "network addresses", "network address"]
+        case .healthInformation:
+            ["health information", "medical information", "phi",
+             "protected health information", "health records", "medical records",
+             "medical record numbers", "medical record number", "diagnoses", "diagnosis",
+             "member ids", "member id", "claim numbers", "claim number",
+             "patient ids", "patient id"]
+        case .employeeIdentifiers:
+            ["employee ids", "employee id", "employee numbers", "employee number",
+             "employee identifiers", "staff ids", "staff id", "staff numbers", "staff number",
+             "personnel numbers", "personnel number"]
         }
     }
 

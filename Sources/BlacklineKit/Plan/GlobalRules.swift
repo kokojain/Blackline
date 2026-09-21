@@ -17,9 +17,51 @@ public struct GlobalRules: Equatable, Sendable {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// How much of this file can go into a prompt, in characters.
+    ///
+    /// The on-device model's context window holds the instructions, the guidance, the page
+    /// text *and* the reply — 4,096 tokens for all four. Measured: a 24 KB policy document
+    /// pasted in here produces a 5,508-token prompt, and every page of every document fails
+    /// with `exceededContextWindowSize`. `ModelProposer` halves the *page* on that error,
+    /// which cannot help when the guidance is what overflowed, so the run degrades to the
+    /// detectors alone — silently, which is the failure spec §7 is about.
+    ///
+    /// 3,000 characters is roughly 800 tokens, leaving the instructions (~400), a page chunk
+    /// (~350) and the 1,200-token reply comfortable room. A standing instruction longer than
+    /// this is a policy document; keep it beside `globalrules.md` and put the operative part
+    /// — what to find, what to leave alone — in the file itself.
+    public static let promptBudget = 3_000
+
     /// The guidance with markdown furniture stripped, ready to put in a prompt. Headings and
     /// bullets are for the person editing the file; the model just needs the sentences.
+    ///
+    /// Trimmed to ``promptBudget`` at a line boundary. A caller that trims must say so —
+    /// see ``omittedCharacterCount``.
     public var guidance: String {
+        let whole = strippedGuidance
+        guard whole.count > Self.promptBudget else { return whole }
+
+        var kept: [Substring] = []
+        var used = 0
+        for line in whole.split(separator: "\n", omittingEmptySubsequences: false) {
+            guard used + line.count + 1 <= Self.promptBudget else { break }
+            kept.append(line)
+            used += line.count + 1
+        }
+        return kept.joined(separator: "\n")
+    }
+
+    /// How much of the file did not fit in the prompt. Zero when all of it did.
+    ///
+    /// Whoever puts guidance in a prompt has to report this: guidance that was not sent did
+    /// not apply, and a run that implies it followed rules it never saw is exactly the
+    /// silent under-redaction spec §7 warns about.
+    public var omittedCharacterCount: Int {
+        max(0, strippedGuidance.count - guidance.count)
+    }
+
+    /// All of it, furniture stripped and nothing dropped.
+    public var strippedGuidance: String {
         text
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line -> String in

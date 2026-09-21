@@ -1,0 +1,54 @@
+# Rules for synthetic-proprietary-packet.md — the redact.txt a user at this company
+# would write. Every category the vocabulary knows, plus the quoted rules for what no
+# detector can find: the people, and the names the company gave its secrets.
+
+# People. Person names have no detector (see MatcherFactory), so they are listed here,
+# by surname — a quoted rule is a substring match, so "Delacroix" covers "Marcus
+# Delacroix", "M. Delacroix" and the mailbox "m.delacroix".
+"Raghunathan"
+"Okonkwo"
+"Sørensen"
+"Delacroix"
+"Yoshida"
+"Whitfield"
+"Mendes"
+"Bakr"
+"Nowak"
+"Tanaka"
+"Vogt"
+"Reinholt"
+"Halvorsen"
+"Reyes"
+"Alvarez"
+"Feldman"
+"Osei"
+"Lindqvist"
+
+# Code names, unreleased products and trade-secret designations.
+"BLUE HERON"
+"KESTREL"
+"WREN"
+"MAGPIE"
+"OSPREY"
+"HX-7"
+"MHS-CA-3"
+"VLT-0093"
+"Corvid Optics"
+"Halvard Industries"
+
+# Categories.
+social security numbers
+credit card numbers
+account numbers
+employer identification numbers
+passport numbers
+driver's license numbers
+email addresses
+phone numbers
+street addresses
+dates of birth
+secrets
+ip addresses
+health information
+employee ids
+person names

@@ -148,4 +148,30 @@ struct AccountNumberMatcherTests {
     func carriesCategory() {
         #expect(matcher.matches(in: "Account 000123456789").first?.source == .category(.accountNumbers))
     }
+
+    @Test("A SWIFT or BIC code beside its label", arguments: [
+        ("SWIFT: NRDLDEHHXXX", "NRDLDEHHXXX"), ("BIC BANKGB22", "BANKGB22"),
+    ])
+    func swiftCode(_ text: String, _ expected: String) {
+        #expect(AccountNumberMatcher().matches(in: text).map(\.matchedText) == [expected])
+    }
+
+    @Test("A SWIFT label beside prose is not a code")
+    func swiftLabelBeforeProse() {
+        #expect(AccountNumberMatcher().matches(in: "swift transfer requested").isEmpty)
+    }
+
+    // A column header labels every cell under it, which the label window above cannot
+    // reach past a table's separator row.
+    @Test("A column headed Account Number or Routing labels every cell under it")
+    func columnHeaders() {
+        let text = """
+        | Account | Institution | Routing | Account Number |
+        |---|---|---|---|
+        | Operating | Cascadia First | 125000024 | 4471928830155 |
+        | Treasury | Cascadia First | 125000024 | 4471928830163 |
+        """
+        #expect(AccountNumberMatcher().matches(in: text).map(\.matchedText)
+            == ["125000024", "4471928830155", "125000024", "4471928830163"])
+    }
 }

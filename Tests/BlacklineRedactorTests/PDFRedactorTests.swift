@@ -497,3 +497,43 @@ struct WorthActingOnTests {
         #expect(PDFRedactor.worthActingOn([""], intended: intended).isEmpty)
     }
 }
+
+/// How much of the page a box is allowed to cover.
+///
+/// Under-redaction is the dangerous failure, but a run that blacks out the captions beside
+/// the values leaves a form nobody can read — which is the other way to fail, and the one
+/// that gets reported as "it redacted too much".
+@Suite("Boxes cover the value, not the row")
+struct BoxExtentTests {
+
+    private let redactor = PDFRedactor(verifiesByReading: false)
+
+    // PDFKit hands back a box spanning the whole row on a form laid out in columns, and that
+    // box overlaps the right answer by definition.
+    @Test("PDFKit's box is rejected when it is really the row")
+    func rejectsRowWideBoxes() {
+        let recognized = CGRect(x: 400, y: 700, width: 80, height: 14)
+        let wholeRow = CGRect(x: 50, y: 698, width: 500, height: 16)
+        #expect(!redactor.agrees(recognized, with: wholeRow))
+    }
+
+    @Test("A box spanning two rows is rejected too")
+    func rejectsTallBoxes() {
+        let recognized = CGRect(x: 400, y: 700, width: 80, height: 14)
+        let twoRows = CGRect(x: 398, y: 690, width: 84, height: 30)
+        #expect(!redactor.agrees(recognized, with: twoRows))
+    }
+
+    @Test("A box that lines up is kept, so its extra coverage is not lost")
+    func keepsAgreeingBoxes() {
+        let recognized = CGRect(x: 400, y: 700, width: 80, height: 14)
+        let agreeing = CGRect(x: 398, y: 699, width: 86, height: 17)
+        #expect(redactor.agrees(recognized, with: agreeing))
+    }
+
+    @Test("A box that does not overlap at all is rejected")
+    func rejectsDisjointBoxes() {
+        let recognized = CGRect(x: 400, y: 700, width: 80, height: 14)
+        #expect(!redactor.agrees(recognized, with: CGRect(x: 50, y: 600, width: 80, height: 14)))
+    }
+}

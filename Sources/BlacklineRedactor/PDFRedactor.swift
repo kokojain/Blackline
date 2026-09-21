@@ -281,6 +281,30 @@ public struct PDFRedactor: Sendable {
             var matches = matchers.flatMap { $0.matches(in: SourceText(pageText)) }
             matches += additionalMatches[index] ?? []
 
+            // A rule that hits the same page dozens of times is not finding an identifier.
+            // Literal rules are substring searches by §4's design, so a one- or two-letter
+            // literal — which a plan can acquire from the model or from a typo — asks for
+            // every occurrence of that letter on the page. Measured on a 21-page 1120S: a
+            // plan containing `a`, `b`, `cost` and `year` produced 2,632 redactions and left
+            // almost nothing readable. Such a rule is refused *for that page* and said out
+            // loud; blacking the page out and reporting success is the worse answer, and so
+            // is going quiet about it.
+            let runaway = Dictionary(grouping: matches, by: \.source)
+                .filter { $0.value.count > Self.maximumMatchesPerRulePerPage }
+            if !runaway.isEmpty {
+                let refused = Set(runaway.keys)
+                matches.removeAll { refused.contains($0.source) }
+                for (source, hits) in runaway.sorted(by: { $0.value.count > $1.value.count }) {
+                    unresolved.append(
+                        """
+                        Page \(index + 1): the rule \(source.ruleDescription) matched \
+                        \(hits.count) times, which is too many to be an identifier. It was \
+                        not applied to this page.
+                        """
+                    )
+                }
+            }
+
             // Form fields and annotation contents are not always part of the page's text,
             // so they are scanned separately. A matching annotation is removed outright —
             // covering it would leave the value in the file.
@@ -556,6 +580,11 @@ public struct PDFRedactor: Sendable {
     /// small print rendered at the default raster scale.
     static let recognitionScale: CGFloat = 4.0
 
+    /// How often one rule may match a single page before it is treated as a mistake rather
+    /// than a finding. An identifier repeats — an EIN heads every page of a return, a
+    /// shareholder's name appears a dozen times on a K-1 — but not forty times.
+    static let maximumMatchesPerRulePerPage = 40
+
     // MARK: - Locating
 
     /// Turns matches into black boxes in page space, one per line the match occupies.
@@ -619,13 +648,34 @@ public struct PDFRedactor: Sendable {
             } else {
                 boxes += fromReading
                 boxes += fromPDFKit.filter { candidate in
-                    fromReading.contains { $0.intersects(candidate) }
+                    fromReading.contains { agrees($0, with: candidate) }
                 }
             }
         }
 
         return boxes
     }
+
+    /// Whether PDFKit's box for a value is close enough to the recognized one to keep.
+    ///
+    /// Overlapping is not enough. PDFKit hands back a box spanning the whole row on a form
+    /// laid out in columns, and that box overlaps the right answer by definition — keeping
+    /// it blacks out the caption beside the value and everything else on the line. Measured
+    /// on a W-2: the employee's name, SSN, address and date of birth are four values in two
+    /// columns, and the three rows holding them became a single black slab.
+    ///
+    /// So a PDFKit box is kept only when it is no more than half as big again as the
+    /// recognized one, in **both** directions. Width alone is not enough: measured on the
+    /// same form, the box for a value on one row came back 29 points tall and covered the
+    /// row above it, clipping the employer's name in half.
+    func agrees(_ recognized: CGRect, with candidate: CGRect) -> Bool {
+        guard recognized.intersects(candidate) else { return false }
+        return candidate.width <= recognized.width * Self.agreementFactor
+            && candidate.height <= recognized.height * Self.agreementFactor
+    }
+
+    /// How much larger than the recognized box PDFKit's may be and still be believed.
+    static let agreementFactor: CGFloat = 1.5
 
     /// Trims an over-tall line box down to the row the glyphs actually occupy.
     ///

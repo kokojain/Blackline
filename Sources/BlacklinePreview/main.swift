@@ -243,7 +243,8 @@ if !built.unsupportedCategories.isEmpty {
     let names = built.unsupportedCategories.map(\.canonicalName).joined(separator: ", ")
     gaps.append("""
     NOT CHECKED — no detector built yet for: \(names).
-      These need NSDataDetector and NaturalLanguage (spec §5.3). Until then, list such
+      Names need NaturalLanguage's NER (spec §5.3), and a date is only a date until
+      something nearby says whose birth it is. Until then, run with --llm, or list such
       values as quoted exact rules in your rules file.
     """)
 }

@@ -9,6 +9,12 @@ import Foundation
 ///
 /// This is the identifier that dominates business returns: an 1120-S carries the
 /// corporation's EIN on page one and often again on every K-1.
+///
+/// The category's aliases include `tax ids`, and a business carries more of those than
+/// the federal one: a state registration (`WA UBI 603-118-227`), a VAT number
+/// (`DE311894520`), a GST or ABN. Those have no shape in common, so they are matched only
+/// beside their label — up to three letters, then eight to sixteen digits with hyphens or
+/// spaces.
 public struct EINMatcher: Matcher {
     public var source: MatchSource { .category(.employerIdentificationNumbers) }
 
@@ -34,6 +40,17 @@ public struct EINMatcher: Matcher {
             )
         )
 
+        // Other tax registrations, beside their label. The candidate may carry a country
+        // prefix (`DE311894520`) and must end in a digit.
+        engines.append(
+            RegexMatcher(
+                pattern: #"\b(?:vat|ubi|tin|gst|abn|steuernummer|tax\s+(?:id|number|no\.?|registration))"#
+                    + #"\b[^0-9]{0,25}?([A-Z]{0,3}[0-9][0-9 -]{6,14}[0-9])(?![0-9-])"#,
+                options: [.caseInsensitive],
+                captureGroup: 1
+            )
+        )
+
         self.engines = engines
     }
 
@@ -53,14 +70,17 @@ public struct EINMatcher: Matcher {
 ///
 /// Passport numbers have no globally consistent format — six to nine alphanumerics covers
 /// most issuers but also covers a great many ordinary strings. Matching therefore requires a
-/// label, on the same reasoning as ``AccountNumberMatcher``: shape is not evidence.
+/// label, on the same reasoning as ``AccountNumberMatcher``: shape is not evidence. The
+/// candidate must also carry a digit: no issuer numbers a passport in letters alone, and
+/// without the rule `passport renewal` redacts the word *renewal*.
 public struct PassportNumberMatcher: Matcher {
     public var source: MatchSource { .category(.passportNumbers) }
 
     private let engine = RegexMatcher(
         pattern: #"\bpassports?\s*(?:number|no\.?|#)?\s*[:.\-]?\s*([A-Z0-9]{6,9})\b"#,
         options: [.caseInsensitive],
-        captureGroup: 1
+        captureGroup: 1,
+        validate: { candidate, _ in candidate.contains(where: \.isNumber) }
     )
 
     public init() {}
@@ -73,7 +93,9 @@ public struct PassportNumberMatcher: Matcher {
 /// Detects driver's licence numbers (spec §5.3).
 ///
 /// Formats are state-specific and collectively match almost anything, so like passports this
-/// requires a label rather than guessing from shape.
+/// requires a label rather than guessing from shape — and a digit in the candidate, since
+/// every state's format has one. Measured on the synthetic corpus, without that rule
+/// `BIS license application` blacked out the word *application*.
 public struct DriversLicenseMatcher: Matcher {
     public var source: MatchSource { .category(.driversLicenseNumbers) }
 
@@ -81,7 +103,8 @@ public struct DriversLicenseMatcher: Matcher {
         pattern: #"\b(?:driver'?s?\s+licen[sc]e|driving\s+licen[sc]e|licen[sc]e|dl)\s*"#
             + #"(?:number|no\.?|#)?\s*[:.\-]?\s*([A-Z0-9]{5,20})\b"#,
         options: [.caseInsensitive],
-        captureGroup: 1
+        captureGroup: 1,
+        validate: { candidate, _ in candidate.contains(where: \.isNumber) }
     )
 
     public init() {}

@@ -57,13 +57,25 @@ struct CreditCardMatcherTests {
     @Test("Matches a card number split across a line break")
     func spansLineBreak() {
         let found = matcher.matches(in: "Card 4111-1111-\n1111-1111 exp 09/28")
-        #expect(found.count == 1)
-        #expect(found.first?.matchedText == "4111-1111-\n1111-1111")
+        #expect(found.map(\.matchedText) == ["4111-1111-\n1111-1111", "09/28"])
     }
 
     @Test("Finds every card on the page")
     func findsAll() {
         #expect(matcher.matches(in: "4111111111111111 / 378282246310005").count == 2)
+    }
+
+    @Test("The security code and expiry beside their labels")
+    func securityCodeAndExpiry() {
+        let found = matcher.matches(in: "4111 1111 1111 1111 (exp 04/28, CVV 7291)")
+        #expect(found.map(\.matchedText) == ["4111 1111 1111 1111", "04/28", "7291"])
+    }
+
+    @Test("A code or date without a label is not card data", arguments: [
+        "Box 7291", "due 04/28", "expected 13/28",
+    ])
+    func unlabeledCodeOrDate(_ text: String) {
+        #expect(matcher.matches(in: text).isEmpty)
     }
 
     @Test("Matches are attributed to the credit card numbers category")

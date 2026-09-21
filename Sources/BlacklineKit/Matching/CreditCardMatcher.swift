@@ -9,6 +9,10 @@ import Foundation
 /// Note that a *masked* number such as `4417-XXXX-XXXX-9803` deliberately does not match —
 /// it has only eight digits. Spec §4 files that example under quoted exact rules, which is
 /// where a masked number belongs.
+///
+/// The card's security code and expiry are matched beside their labels (`CVV 7291`,
+/// `exp 04/28`): three digits or a month and year are nothing on their own, but next to
+/// a card number they are the rest of what a charge needs.
 public struct CreditCardMatcher: Matcher {
     public var source: MatchSource { .category(.creditCardNumbers) }
 
@@ -17,6 +21,18 @@ public struct CreditCardMatcher: Matcher {
     public let requiresLuhn: Bool
 
     private let engine: RegexMatcher
+
+    private let securityCode = RegexMatcher(
+        pattern: #"\b(?:cvv2?|cvc2?|cid|csc|security\s+code|card\s+code)\s*[:.\-]?\s*([0-9]{3,4})\b"#,
+        options: [.caseInsensitive],
+        captureGroup: 1
+    )
+    private let expiry = RegexMatcher(
+        pattern: #"\b(?:exp(?:iry|ires|iration)?\.?(?:\s+date)?|valid\s+thru)\s*[:.\-]?\s*"#
+            + #"((?:0[1-9]|1[0-2])\s*/\s*(?:[0-9]{2}|20[0-9]{2}))\b"#,
+        options: [.caseInsensitive],
+        captureGroup: 1
+    )
 
     public init(requiresLuhn: Bool = true) {
         self.requiresLuhn = requiresLuhn
@@ -31,7 +47,10 @@ public struct CreditCardMatcher: Matcher {
     }
 
     public func matches(in text: SourceText) -> [Match] {
-        engine.matches(in: text, source: source)
+        (engine.matches(in: text, source: source)
+            + securityCode.matches(in: text, source: source)
+            + expiry.matches(in: text, source: source))
+            .sorted { $0.range.lowerBound < $1.range.lowerBound }
     }
 
     /// The Luhn (mod 10) checksum, ignoring any separators in `candidate`.

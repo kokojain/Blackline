@@ -15,6 +15,19 @@ struct RegexMatcher: Sendable {
         /// The span between the start of the whole match and the start of the capture —
         /// i.e. the label or prefix that qualified the candidate.
         let prefixRange: NSRange
+
+        /// How many line breaks fall between the label and the value it qualifies.
+        ///
+        /// Patterns run on ``SourceText/normalized``, where newlines have already become
+        /// spaces, so a matcher that cares about layout has to count them in the original.
+        /// A label two lines above a number is usually labelling something else.
+        var prefixLineBreaks: Int {
+            guard prefixRange.length > 0,
+                  let prefix = Range(prefixRange, in: text.normalized),
+                  let original = text.originalRange(forNormalized: prefix)
+            else { return 0 }
+            return text.original[original].count(where: \.isNewline)
+        }
     }
 
     let regex: NSRegularExpression

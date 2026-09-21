@@ -161,7 +161,7 @@ struct DocumentPlanTests {
     func warnsAboutItsContents() {
         let text = plan([.init(value: "12-3456789", page: 1)]).markdown(globalRulesPath: nil)
         // The warning is wrapped across lines in the file, so check its parts.
-        #expect(text.contains("lists the values found in the document, in full"))
+        #expect(text.contains("lists the values in full"))
         #expect(text.contains("as sensitive"))
         #expect(text.contains("Delete it when you are done"))
     }
@@ -196,5 +196,86 @@ struct GlobalRulesTests {
     func starterLeavesMoneyAlone() {
         #expect(GlobalRules.starter.contains("Leave money alone"))
         #expect(GlobalRules(text: GlobalRules.starter).isEmpty == false)
+    }
+}
+
+/// Guidance goes into a prompt whose whole context — instructions, rules, page text and the
+/// reply — is about 4,000 tokens. A policy document pasted into `globalrules.md` overflows
+/// it on every page, and the failure is silent: the run falls back to the detectors alone.
+@Suite("Global rules fit in the prompt")
+struct GlobalRulesBudgetTests {
+
+    private func longRules(characters: Int) -> GlobalRules {
+        let line = "Remove every identifier that names a person or an organisation."
+        let lines = (characters / line.count) + 2
+        return GlobalRules(text: (0 ..< lines).map { _ in "- \(line)" }.joined(separator: "\n"))
+    }
+
+    @Test("Ordinary guidance is passed through whole")
+    func shortGuidanceIsUntouched() {
+        let rules = GlobalRules(text: GlobalRules.starter)
+        #expect(rules.guidance == rules.strippedGuidance)
+        #expect(rules.omittedCharacterCount == 0)
+    }
+
+    @Test("Guidance past the budget is trimmed to it")
+    func longGuidanceIsTrimmed() {
+        let rules = longRules(characters: GlobalRules.promptBudget * 3)
+        #expect(rules.guidance.count <= GlobalRules.promptBudget)
+        #expect(rules.omittedCharacterCount > 0)
+    }
+
+    @Test("It is trimmed at a line boundary, so no rule is cut in half")
+    func trimsAtALineBoundary() {
+        let rules = longRules(characters: GlobalRules.promptBudget * 2)
+        let lines = rules.guidance.split(separator: "\n")
+        #expect(lines.allSatisfy { $0.hasSuffix("organisation.") })
+    }
+
+    // Trimming silently would mean a run implying it followed rules it never saw.
+    @Test("What was dropped is countable, so a caller can report it")
+    func omissionIsCountable() {
+        let rules = longRules(characters: GlobalRules.promptBudget * 2)
+        #expect(rules.omittedCharacterCount
+            == rules.strippedGuidance.count - rules.guidance.count)
+    }
+}
+
+/// A postal address is matched across the line break the form printed it on, so the value
+/// reaching a plan carries a newline.
+@Suite("Plan items are one line")
+struct DocumentPlanLineTests {
+
+    @Test("A value that wrapped is stored on one line")
+    func wrappedValueIsFolded() {
+        let item = DocumentPlan.Item(value: "400 Atlantic Ave Suite 900\nBoston MA 02110")
+        #expect(item.value == "400 Atlantic Ave Suite 900 Boston MA 02110")
+    }
+
+    // Written raw, the newline ends the markdown line halfway through: the value is lost and
+    // so is the rest of the line after it.
+    @Test("Such a plan survives a round trip through the file")
+    func roundTripsThroughTheFile() {
+        let plan = DocumentPlan(sourceName: "w2.pdf", items: [
+            DocumentPlan.Item(value: "400 Atlantic Ave Suite 900\nBoston MA 02110",
+                              label: "street addresses", page: 1),
+            DocumentPlan.Item(value: "123-45-6789", label: "social security numbers", page: 1),
+        ])
+        let reread = DocumentPlan.parse(plan.markdown(globalRulesPath: nil), sourceName: "w2.pdf")
+        #expect(reread.items.count == 2)
+        #expect(reread.selectedValues == [
+            "400 Atlantic Ave Suite 900 Boston MA 02110", "123-45-6789",
+        ])
+    }
+
+    // The folded value has to still find the wrapped text, or the fix would trade a broken
+    // plan for a missed redaction.
+    @Test("The folded value still matches the text it came from")
+    func foldedValueStillMatches() {
+        let page = SourceText("Employer\n400 Atlantic Ave Suite 900\nBoston MA 02110\nBox 1")
+        let item = DocumentPlan.Item(value: "400 Atlantic Ave Suite 900\nBoston MA 02110")
+        let found = ExactTextMatcher(literal: item.value).matches(in: page)
+        #expect(found.count == 1)
+        #expect(found.first?.matchedText == "400 Atlantic Ave Suite 900\nBoston MA 02110")
     }
 }

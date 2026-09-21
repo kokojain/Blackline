@@ -137,3 +137,80 @@ struct PageOCRTests {
         #expect(reading.isEmpty)
     }
 }
+
+/// A value printed across two or three rows — the ordinary shape of a postal address on a
+/// form — and the misreads recognition makes while reading one back.
+@Suite("Wrapped values")
+struct WrappedValueTests {
+
+    private func line(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat) -> RecognizedLine {
+        var tokens: [RecognizedToken] = []
+        let words = text.split(whereSeparator: \.isWhitespace)
+        let perCharacter = width / CGFloat(max(text.count, 1))
+        var searchFrom = text.startIndex
+        for word in words {
+            guard let range = text.range(of: word, range: searchFrom ..< text.endIndex) else { continue }
+            searchFrom = range.upperBound
+            let start = CGFloat(text.distance(from: text.startIndex, to: range.lowerBound))
+            tokens.append(
+                RecognizedToken(
+                    range: range,
+                    box: CGRect(x: x + start * perCharacter, y: y,
+                                width: CGFloat(word.count) * perCharacter, height: 12)
+                )
+            )
+        }
+        return RecognizedLine(text: text, box: CGRect(x: x, y: y, width: width, height: 12),
+                              tokens: tokens, confidence: 1)
+    }
+
+    /// A form row in two columns: the value on the left, an unrelated field on the right.
+    private var form: PageReading {
+        PageReading(lines: [
+            line("Employee: Sarah J Chen", x: 50, y: 700, width: 200),
+            line("88 Harbor St Apt 4B", x: 95, y: 686, width: 140),
+            line("Boston MA 02210", x: 95, y: 672, width: 110),
+            line("Employer EIN: 12-3456789", x: 310, y: 672, width: 180),
+            line("Boston MA 02110", x: 95, y: 658, width: 110),
+        ])
+    }
+
+    // Without this the value is on no single line, the caller falls back to PDFKit's
+    // geometry, and PDFKit hands back the whole row — captions, second column and all.
+    @Test("A value spanning two rows gets one box per row")
+    func wrappedValueIsBoxedPerLine() {
+        let boxes = form.boxes(covering: "88 Harbor St Apt 4B Boston MA 02210")
+        #expect(boxes.count == 2)
+        #expect(boxes.allSatisfy { $0.maxX <= 240 })     // never reaches the second column
+        #expect(boxes.map(\.minY).sorted() == [672, 686])
+    }
+
+    @Test("It is placed even where recognition misread a character")
+    func toleratesAMisread() {
+        let misread = PageReading(lines: [
+            line("88 Harbor St Apt 4B", x: 95, y: 686, width: 140),
+            line("Boston MA 0Z210", x: 95, y: 672, width: 110),      // "Z" for "2"
+        ])
+        #expect(misread.boxes(covering: "88 Harbor St Apt 4B Boston MA 02210").count == 2)
+    }
+
+    // One digit standing where another was wanted is a different number, not a misread.
+    // Measured on a W-2: the employee's postcode blacked out the employer's, one row down.
+    @Test("A different number on another row is left alone")
+    func doesNotCoverADifferentNumber() {
+        let boxes = form.boxes(covering: "Boston MA 02210")
+        #expect(boxes.count == 1)
+        #expect(boxes[0].minY == 672)
+    }
+
+    @Test("A value that stops short of the line's end does not wrap")
+    func requiresTheValueToReachTheLineEnd() {
+        // "Sarah" is followed by more text on its line, so nothing here wrapped.
+        #expect(form.boxes(covering: "Sarah 88 Harbor").isEmpty)
+    }
+
+    @Test("Words scattered down the page are not joined up")
+    func doesNotJoinUnrelatedLines() {
+        #expect(form.boxes(covering: "Chen Boston MA 02110").isEmpty)
+    }
+}

@@ -28,7 +28,11 @@ let package = Package(
             name: "BlacklineRedactCLI",
             dependencies: ["BlacklineKit", "BlacklineIntelligence", "BlacklineRedactor"]
         ),
-        .testTarget(name: "BlacklineKitTests", dependencies: ["BlacklineKit"]),
+        .testTarget(
+            name: "BlacklineKitTests",
+            dependencies: ["BlacklineKit"],
+            resources: [.copy("Fixtures")]
+        ),
         .testTarget(name: "BlacklineOCRTests", dependencies: ["BlacklineOCR"]),
         .testTarget(
             name: "BlacklineUITests",
@@ -36,7 +40,7 @@ let package = Package(
         ),
         .testTarget(
             name: "BlacklineRedactorTests",
-            dependencies: ["BlacklineRedactor", "BlacklineKit"]
+            dependencies: ["BlacklineRedactor", "BlacklineKit", "BlacklineOCR"]
         ),
         .testTarget(
             name: "BlacklineIntelligenceTests",

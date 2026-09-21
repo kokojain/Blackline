@@ -193,4 +193,207 @@ struct ProposalFilterTests {
         #expect(ProposalFilter.isNotIdentifying(""))
         #expect(ProposalFilter.isNotIdentifying("   "))
     }
+
+    // Observed on a W-2: the model reported "Box 2", "Box 3" and "Box 17" as account
+    // numbers. Vision reads a caption and its dotted leader as one token, so blacking out
+    // "Box 2" takes the whole row with it — three rows of the form went black.
+    // A 1120S carries a page listing dozens of IRS forms. The model reported the lot as
+    // account numbers; they are the same on every copy in the country.
+    @Test("Rejects the names of published forms", arguments: [
+        "Form 1041-ND", "Form 1041 (trust)", "Form 990 (bankruptcy estate only)",
+        "SCHEDULE K-1", "FORM 3885-CORP", "Form 8879-S", "Sch. D",
+    ])
+    func rejectsPublishedForms(_ candidate: String) {
+        #expect(ProposalFilter.isNotIdentifying(candidate))
+    }
+
+    @Test("Keeps a form reference that carries a name", arguments: [
+        "Schedule K-1 for Jane Taxpayer", "Form 1120S Knob Holdings",
+    ])
+    func keepsNamedFormReferences(_ candidate: String) {
+        #expect(!ProposalFilter.isNotIdentifying(candidate))
+    }
+
+    @Test("Rejects box and line captions", arguments: [
+        "Box 1", "Box 17", "box 2", "Line 12", "Line 7a", "Part 3", "Schedule 1",
+        "Form 1040", "Page 2", "Item 4", "Column 3", "Step 2", "Code 12",
+    ])
+    func rejectsFormFurniture(_ candidate: String) {
+        #expect(ProposalFilter.isNotIdentifying(candidate))
+    }
+
+    // The caption test must not reach a value that merely starts with one of those words.
+    @Test("Keeps values a caption test could swallow", arguments: [
+        "PO Box 1234", "Box 1234567890", "Lines Ltd", "Schedule K-1 for Jane Taxpayer",
+        "Formby, Merseyside L37 3PX",
+    ])
+    func keepsValuesNearCaptions(_ candidate: String) {
+        #expect(!ProposalFilter.isNotIdentifying(candidate))
+    }
+
+    // The instructions forbid reporting money. A proposal labelled "money" is one the model
+    // has itself put out of scope while reporting it anyway.
+    @Test("Rejects a proposal the model labels as money", arguments: [
+        "money", "Money", "dollar amount", "total", "account balance", "annual wages",
+        "compensation", "percentage", "form title", "line number",
+    ])
+    func rejectsExcludedKinds(_ kind: String) {
+        #expect(ProposalFilter.isExcludedKind(kind))
+    }
+
+    @Test("Keeps the kinds that are the point of the model tier", arguments: [
+        "person name", "street address", "date of birth", "account number", "email address",
+        "employer identification number", "signature", "", "preparer identifier",
+    ])
+    func keepsIdentifyingKinds(_ kind: String) {
+        #expect(!ProposalFilter.isExcludedKind(kind))
+    }
+}
+
+/// What the model hands back around a value, and what has to come off before it is redacted.
+@Suite("Proposals carry their captions")
+struct ProposalCaptionTests {
+
+    // Observed on a W-2: asked for the personal information on the page, the model reports
+    // the field label with the value. Redacting that span blacks out the caption, and a form
+    // without its captions cannot be read.
+    @Test("The caption in front of a value is removed", arguments: [
+        ("Employee SSN: 123-45-6789", "123-45-6789"),
+        ("Employee: Sarah J Chen", "Sarah J Chen"),
+        ("Contact: payroll@example.com", "payroll@example.com"),
+        ("Date of birth: 03/14/1982", "03/14/1982"),
+    ])
+    func stripsCaptions(_ testCase: (String, String)) {
+        #expect(ProposalFilter.valueWithoutLabel(testCase.0) == testCase.1)
+    }
+
+    @Test("A value that is not a caption plus a value is left alone", arguments: [
+        "123-45-6789", "Sarah J Chen", "https://example.com/portal",
+        "88 Harbor St Apt 4B", "Suite 900: 400 Atlantic Ave",
+    ])
+    func keepsPlainValues(_ value: String) {
+        #expect(ProposalFilter.valueWithoutLabel(value) == value)
+    }
+
+    @Test("A proposal that is a rule's finding plus its caption is recognised", arguments: [
+        ("Routing 021000021", "021000021"),
+        ("Direct deposit account number 000123456789", "000123456789"),
+        ("Employer EIN: 12-3456789", "12-3456789"),
+        ("123-45-6789", "123-45-6789"),
+    ])
+    func spotsCaptionedRuleHits(_ testCase: (String, String)) {
+        #expect(ProposalFilter.isRuleHitWithCaption(testCase.0, ruleValue: testCase.1))
+    }
+
+    // On a two-column form the text layer interleaves the columns, so the address detector
+    // sees only part of the address and the model sees all of it. Dropping the model's span
+    // there would leave the street on the page.
+    @Test("A proposal that genuinely covers more is kept")
+    func keepsWiderProposals() {
+        #expect(!ProposalFilter.isRuleHitWithCaption(
+            "88 Harbor St Apt 4B Boston MA 02210", ruleValue: "Boston MA 02210"
+        ))
+        #expect(!ProposalFilter.isRuleHitWithCaption(
+            "Sarah J Chen, 88 Harbor St", ruleValue: "Sarah J Chen"
+        ))
+    }
+}
+
+/// What the model hands back on a dense return, and why the shape of a value is evidence.
+///
+/// Every case here was taken from one run over a 21-page 1120S whose plan, unfiltered,
+/// held 180 items and produced 2,632 redactions.
+@Suite("Proposals have to look like what they claim to be")
+struct ProposalShapeTests {
+
+    @Test("Rejects values too slight to be an identifier", arguments: [
+        "a", "b", "Yes", "( )", "12a", "13g", "16f", "cost", "year", "Date", "period",
+        "S/L -", "1",
+    ])
+    func rejectsSlightValues(_ candidate: String) {
+        #expect(ProposalFilter.isTooSlight(candidate))
+    }
+
+    @Test("Keeps values that carry the structure of an identifier", arguments: [
+        "123-45-6789", "87-4091539", "David Auer", "KNOB LLC", "000123456789",
+        "sarah.chen@example.com", "(617) 555-0148", "88 Harbor St",
+    ])
+    func keepsStructuredValues(_ candidate: String) {
+        #expect(!ProposalFilter.isTooSlight(candidate))
+    }
+
+    // Line-item captions running down a Schedule K-1, all reported as person names.
+    @Test("Rejects a caption the model called a name", arguments: [
+        "Interest income", "Ordinary dividends", "Qualified dividends",
+        "Net short-term capital gain (loss) (attach Schedule D)",
+        "Other net rental income (loss). Subtract line 3c",
+        "Unrecaptured section 1250 gain (attach statement)",
+    ])
+    func rejectsCaptionsCalledNames(_ candidate: String) {
+        #expect(ProposalFilter.isImplausibleName(candidate, kind: "person name"))
+    }
+
+    @Test("Keeps names as names are written", arguments: [
+        "David Auer", "KNOB LLC", "Sarah J Chen", "Knob Holdings LLC",
+        "Ludwig van Beethoven", "Daniel Ortiz", "O'Brien & Sons",
+    ])
+    func keepsRealNames(_ candidate: String) {
+        #expect(!ProposalFilter.isImplausibleName(candidate, kind: "person name"))
+    }
+
+    // The shape test only applies where the model claims a name.
+    @Test("Says nothing about a value it was not asked about")
+    func onlyJudgesNames() {
+        #expect(!ProposalFilter.isImplausibleName("Interest income", kind: "account number"))
+    }
+
+    @Test("Rejects a table row the model called an account number")
+    func rejectsOverlongIdentifiers() {
+        let row = "24506035 130000 100.000 1000.00000 KNOB LLC 87"
+        #expect(ProposalFilter.isImplausibleIdentifier(row, kind: "account number"))
+        #expect(!ProposalFilter.isImplausibleIdentifier("000123456789", kind: "account number"))
+        #expect(!ProposalFilter.isImplausibleIdentifier("87-4091539", kind: "EIN"))
+    }
+}
+
+/// Tier 3 may only contribute a finding it can name as something this app removes.
+@Suite("Proposal labels are an allow-list")
+struct ProposalKindAllowListTests {
+
+    @Test("Allows the labels for what Blackline removes", arguments: [
+        "person name", "organization name", "company name", "street address",
+        "social security number", "SSN", "ITIN", "employer identification number", "EIN",
+        "account number", "routing number", "bank name", "financial institution",
+        "credit card number", "date of birth", "DOB", "phone number", "email address",
+        "passport number", "driver's license number", "PIN", "password", "API key",
+        "access code", "signature", "insurance policy number", "wallet address",
+    ])
+    func allowsIdentifyingKinds(_ kind: String) {
+        #expect(ProposalFilter.isAllowedKind(kind))
+    }
+
+    // Every one of these came back from a real run and ruined part of a page.
+    @Test("Drops a label that names something else", arguments: [
+        "property", "question", "letter", "string", "form code",
+        "document title", "line item", "description", "class life", "method",
+        "depreciation class", "checkbox", "instruction", "amount", "figure",
+    ])
+    func dropsUnknownKinds(_ kind: String) {
+        #expect(!ProposalFilter.isAllowedKind(kind))
+    }
+
+    // "Account Type" names the kind of an account rather than an account, and it carries
+    // the word "account" — so the allow-list passes it and the deny-list has to catch it.
+    @Test("A label naming a value's type is caught by the deny-list")
+    func typeLabelsAreDenied() {
+        #expect(ProposalFilter.isAllowedKind("Account Type"))
+        #expect(ProposalFilter.isExcludedKind("Account Type"))
+    }
+
+    // A blank label says nothing either way, so the shape tests decide.
+    @Test("An empty label is not itself a reason to drop")
+    func allowsEmptyKind() {
+        #expect(ProposalFilter.isAllowedKind(""))
+        #expect(ProposalFilter.isAllowedKind("   "))
+    }
 }

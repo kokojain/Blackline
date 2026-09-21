@@ -122,8 +122,12 @@ public final class AnalysisJob: Identifiable {
                 items.append(.init(value: trimmed, label: label, page: index + 1))
             }
 
+            /// What the rules found here, to keep the model from widening it.
+            var foundByRules: [String] = []
+
             for match in matchers.flatMap({ $0.matches(in: SourceText(pageText)) }) {
                 add(match.matchedText, match.source.ruleDescription)
+                foundByRules.append(SourceText.normalize(match.matchedText))
             }
 
             if useModel, #available(macOS 26.0, *),
@@ -137,6 +141,15 @@ public final class AnalysisJob: Identifiable {
                     let located = ProposalLocator()
                         .locate(proposed, in: SourceText(pageText)).located
                     for hit in located {
+                        // A proposal that contains a value a rule already found is the same
+                        // finding with more of the page attached — "Routing 021000021" for
+                        // the account number beside it. The rule's span is the tighter of
+                        // the two and is already in the plan, so this one would only widen
+                        // the box over the caption.
+                        let text = SourceText.normalize(hit.proposal.text)
+                        guard !foundByRules.contains(where: {
+                            ProposalFilter.isRuleHitWithCaption(text, ruleValue: $0)
+                        }) else { continue }
                         add(hit.proposal.text, hit.proposal.kind)
                     }
                 } catch is CancellationError {

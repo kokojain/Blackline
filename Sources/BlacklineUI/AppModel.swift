@@ -18,6 +18,8 @@ public final class CompletedRun: Identifiable {
     public let modelReadBackFailures: Int
     /// Categories the rules asked for that no detector in this build can find.
     public let unsupportedCategories: [BlacklineKit.Category]
+    /// Characters of `globalrules.md` that did not fit in the model's prompt.
+    public let globalRulesOmitted: Int
 
     public init(
         sourceURL: URL,
@@ -26,7 +28,8 @@ public final class CompletedRun: Identifiable {
         modelUnavailable: String?,
         modelFailedPages: [Int] = [],
         modelReadBackFailures: Int = 0,
-        unsupportedCategories: [BlacklineKit.Category]
+        unsupportedCategories: [BlacklineKit.Category],
+        globalRulesOmitted: Int = 0
     ) {
         self.sourceURL = sourceURL
         self.result = result
@@ -35,6 +38,7 @@ public final class CompletedRun: Identifiable {
         self.modelFailedPages = modelFailedPages
         self.modelReadBackFailures = modelReadBackFailures
         self.unsupportedCategories = unsupportedCategories
+        self.globalRulesOmitted = globalRulesOmitted
     }
 
     /// Where the file is. Always its real, redacted name — an unverified copy is still
@@ -96,6 +100,13 @@ public final class CompletedRun: Identifiable {
             ))
         }
 
+        if globalRulesOmitted > 0 {
+            gaps.append((
+                "Your global rules were too long for the model",
+                "The last \(globalRulesOmitted) characters of globalrules.md were not sent, so anything written there did not apply. The model's whole context — instructions, rules, page and answer — is about 4,000 tokens. Keep the operative rules in the file and the policy document beside it."
+            ))
+        }
+
         if let modelUnavailable {
             gaps.append((
                 "The on-device model did not run",
@@ -121,17 +132,22 @@ public final class PendingPlan: Identifiable {
     public internal(set) var outputURL: URL?
     public let modelFailedPages: [Int]
     public let modelUnavailable: String?
+    /// Characters of `globalrules.md` that did not fit in the prompt used to read this
+    /// document. Carried to the run so the review window can say so.
+    public let globalRulesOmitted: Int
 
     public init(
         sourceURL: URL,
         planURL: URL,
         modelFailedPages: [Int] = [],
-        modelUnavailable: String? = nil
+        modelUnavailable: String? = nil,
+        globalRulesOmitted: Int = 0
     ) {
         self.sourceURL = sourceURL
         self.planURL = planURL
         self.modelFailedPages = modelFailedPages
         self.modelUnavailable = modelUnavailable
+        self.globalRulesOmitted = globalRulesOmitted
     }
 
     public var name: String { sourceURL.lastPathComponent }
@@ -267,10 +283,12 @@ public final class AppModel {
         analysing = job
         lastProblem = nil
 
+        let globalRules = GlobalRules.load(from: globalRulesURL)
+
         job.run(
             matchers: built.matchers,
             wanted: rules.ruleSet.categories.map(\.canonicalName),
-            guidance: GlobalRules.load(from: globalRulesURL).guidance,
+            guidance: globalRules.guidance,
             usesModel: depth.usesModel,
             globalRulesPath: globalRulesURL.path
         ) { [weak self] finished in
@@ -280,7 +298,8 @@ public final class AppModel {
                     sourceURL: finished.sourceURL,
                     planURL: planURL,
                     modelFailedPages: finished.modelFailedPages,
-                    modelUnavailable: finished.modelUnavailable
+                    modelUnavailable: finished.modelUnavailable,
+                    globalRulesOmitted: globalRules.omittedCharacterCount
                 )
                 self.pending.append(waiting)
                 // The plan is the whole point of this phase, so it opens for editing rather
@@ -312,6 +331,17 @@ public final class AppModel {
         // The plan decides, not the detectors: an item the user unticked must stay in the
         // document however confidently it was found.
         let matchers: [any Matcher] = plan.selectedValues.map { ExactTextMatcher(literal: $0) }
+        // A value too short to be an identifier would match half the document. Refusing it
+        // is not something to do quietly, since the user ticked it.
+        if !plan.refusedValues.isEmpty {
+            let refused = plan.refusedValues
+            let list = refused.map { "“\($0)”" }.joined(separator: ", ")
+            let many = refused.count != 1
+            lastProblem = "\(refused.count) ticked line\(many ? "s" : "") in "
+                + "\(waiting.planURL.lastPathComponent) \(many ? "are" : "is") too short to be "
+                + "an identifier and \(many ? "were" : "was") not used: \(list). "
+                + "Everything else was removed."
+        }
 
         let job = RedactionJob(
             sourceURL: waiting.sourceURL,
@@ -336,7 +366,8 @@ public final class AppModel {
                     modelUnavailable: finished.modelUnavailable ?? waiting.modelUnavailable,
                     modelFailedPages: waiting.modelFailedPages,
                     modelReadBackFailures: finished.modelReadBackFailures,
-                    unsupportedCategories: []
+                    unsupportedCategories: [],
+                    globalRulesOmitted: waiting.globalRulesOmitted
                 )
                 self.runs.removeAll { $0.sourceURL == finished.sourceURL }
                 self.runs.insert(completed, at: 0)

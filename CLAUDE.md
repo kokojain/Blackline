@@ -56,6 +56,9 @@ Sources/BlacklineUI/       the app's views and job model (a library, so it can b
 Sources/BlacklineApp/      Blackline.app entry point: MenuBarExtra + review window
 Scripts/make-app.sh        assembles Blackline.app around the SwiftPM executable
 Tests/BlacklineKitTests/   swift-testing (`import Testing`)
+Tests/BlacklineKitTests/Fixtures/  synthetic-proprietary-packet.md — a fictional company packet seeded
+                           with one of every identifier; SyntheticCorpusTests runs every
+                           detector over it (misses and over-reach are both failures)
 samples/                   scratch space for test documents; gitignored
 ```
 
@@ -74,11 +77,11 @@ SwiftPM cannot build an app bundle, and a menu bar app needs one — `LSUIElemen
 out of the Dock and UserNotifications will not register for a loose binary. `make-app.sh`
 wraps the executable and ad-hoc signs it.
 
-`blackline-preview` reports what *would* be redacted. It writes nothing and cannot produce
-a redacted PDF — the redaction stage does not exist. Its most important output is what it
-says it did **not** check: categories with no detector, and pages with no extractable text.
-A scanned page currently yields zero matches and a loud warning, which is the shape of the
-false negative spec §7 warns about.
+`blackline-preview` reports what *would* be redacted. It writes nothing — producing the copy
+is `blackline-redact`'s job. Its most important output is what it says it did **not** check:
+categories with no detector, and pages with no extractable text. A scanned page currently
+yields zero matches and a loud warning, which is the shape of the false negative spec §7
+warns about.
 
 BlacklineKit imports **Foundation only**, on purpose. Keeping PDFKit, AppKit, and SwiftUI
 out is what makes the matching logic testable headlessly, which matters because spec §7
@@ -117,6 +120,31 @@ falls back to approximate location, with tolerance scaling by length, and widens
 approximate box by one character because its extent is approximate too. That last detail is
 load-bearing: without it the final digit of an identifier stays visible.
 
+**A misread is a letter or a symbol where a digit was wanted, never a different digit.**
+Vision returns `0Z210` for `02210` and `/` for `7`; it does not turn a 2 into a 1. So
+`PageOCR.isRecognitionArtefact` rejects any candidate whose difference is digit-for-digit,
+and both approximate paths honour it. Measured on a W-2: without that rule the employee's
+`Boston MA 02210` also blacked out the employer's `Boston MA 02110` one row below, because
+a tolerance of five mismatches over fifteen characters covers a different postcode easily.
+
+**A value printed across two rows is placed row by row.** A postal address is the ordinary
+case, and searching one line's text can never find it: the caller then falls back to PDFKit's
+geometry, which on a two-column form covers the whole row. That is the "it redacted too much"
+failure in its most damaging form — redacting an employee's address took the `Employee:`
+caption, the SSN label and the second column with it, and three rows of a W-2 became one
+black slab. `PageReading.boxesAcrossLines` uses the one piece of structure a wrapped value
+has: it **ends at the end of a line and resumes at the start of the next**. The first piece
+must be a suffix of its line's words, middle lines are consumed whole, the last piece must be
+a prefix. Nothing else is accepted, so it cannot join a scatter of words down the page.
+
+**"The two agree" cannot mean "the boxes overlap".** PDFKit's box is kept alongside the
+recognized one where they agree, for the extra coverage when they line up — but a box
+spanning the whole row overlaps the right answer by definition, so overlap alone re-admits
+exactly the pathological boxes the recognizer was brought in to replace. `PDFRedactor.agrees`
+requires PDFKit's box to be no more than half as big again as the recognized one **in both
+directions**. Width alone is not enough: measured on the same form, a box for a value on one
+row came back 29 points tall and clipped the employer's name on the row above.
+
 **Text-extraction verification is necessary but not sufficient.** This is the trap worth
 remembering: rasterizing deletes the text layer whether or not the boxes landed correctly,
 so §5.6's re-scan passes trivially on a page with a visible, unredacted SSN. It was caught
@@ -133,6 +161,52 @@ means every dollar figure on the page: wages, totals, balances. Blacking those o
 document for whoever has to read it and protects nobody — a return is mostly figures and
 almost none of them identify anyone. `ProposalFilter.isNotIdentifying` is the hard guard
 behind the prompt, since a prompt is a request and this needs to be a guarantee.
+
+**A proposal's label is an allow-list, not a deny-list.** `ProposalFilter.isAllowedKind`
+keeps a proposal only where its own label names something this app removes — a name, an
+address, an account, a tax number, a date of birth, a PIN, a key. A deny-list was tried
+first and it loses: over three runs of one 1120S the model returned `letter`, `string`,
+`form code`, `Account Type`, `property` (the depreciation classes on a 4562 — `5-year
+property`, `27.5 yrs.`, `Class life`) and `question` (the vehicle questionnaire, five
+sentences of it, which duly went black on page 18). Each had to be added by hand *after* it
+had ruined a page, and the supply of labels a model can invent has no end. The unknown label
+has to fail closed. What it costs is a real finding under a label nobody thought of; the
+detectors do not pass through here, the read-back loop still runs, and the plan is in front
+of the user — whereas a label admitted by mistake blacks out a table before anyone sees it.
+
+**Nothing too slight to be an identifier.** `isTooSlight` requires four characters, rejects
+form line labels (`12a`, `16f`), and then wants a digit, two real words, or eight
+characters. This is the guard that matters most, because a proposal becomes an
+`ExactTextMatcher` and §4 makes that a *substring* search: `a` is not a redaction, it is a
+request to black out every letter *a* in the document. Measured on a 21-page 1120S, a plan
+holding `a`, `b`, `cost`, `year` and `12a`…`13g` turned 180 lines into **2,632 redactions**
+and left nothing on the page. The cost is a lone surname, which belongs in `redact.txt`
+anyway, where it is deterministic.
+
+It rejects three more things, all found by reading a plan the model had written for a W-2.
+**Form furniture:** it reported `Box 2`, `Box 3` and `Box 17` as account numbers, and since
+Vision reads a caption and its dotted leader as one token, blacking out `Box 2` took the
+whole row with it — three rows of the form went black. Box and line numbers stop at two
+digits so a PO box is never mistaken for furniture. **A kind the instructions already
+excluded:** a proposal labelled `money` or `wages` is one the model has itself placed out of
+scope while reporting it anyway, and the label is evidence its text alone does not carry.
+**The caption in front of the value:** asked for the personal information on the page, it
+reports `Employee SSN: 123-45-6789` and `Contact: payroll@…` — the value *and* its field
+label. Redacting that span blacks out the caption, and a form without captions cannot be
+read. `valueWithoutLabel` takes off up to four words of letters followed by a colon and a
+space; a prefix carrying a digit is part of the value, not a label. The prompt asks for the
+same thing, but a prompt is a request.
+
+`AnalysisJob` then drops a proposal that is a rule's own finding with a caption attached —
+`Routing 021000021` beside the account matcher's `021000021` — since the rule's span is the
+tighter one and is already in the plan. What it must not do is discard a proposal that
+genuinely covers more: on a two-column form the text layer interleaves the columns, so the
+address detector sees `Boston MA 02210` while the model sees the whole of `88 Harbor St Apt
+4B Boston MA 02210`. `ProposalFilter.isRuleHitWithCaption` decides by what the extra text
+*is* — a caption is words, and anything carrying a digit is part of the value.
+
+All of these stay narrow, because this filter *removes* redactions and only tier 3 is subject
+to it — the deterministic floor is untouched.
 
 ### The read-back loop
 
@@ -235,9 +309,20 @@ rendered on their own.
 
 Detection is layered, and the layering is a safety property, not just organization:
 
-1. **Deterministic floor** — regex and (later) `NSDataDetector` in BlacklineKit. Structured
-   identifiers with a knowable coverage boundary: you can state exactly which SSN formats
-   are caught. Fast, reproducible, immune to anything written in the document.
+1. **Deterministic floor** — regex, plus `NSDataDetector` for postal addresses, in
+   BlacklineKit. Structured identifiers with a knowable coverage boundary: you can state
+   exactly which SSN formats are caught. Fast, reproducible, immune to anything written in
+   the document.
+
+   `NSDataDetector` is used for addresses and *not* for phone numbers, and the asymmetry is
+   the tier's whole point. An address has no shape a regex can state, so the system detector
+   is strictly better than anything written here. Its `.phoneNumber` type, though, reports
+   `123-45-6789`, `12-3456789` and a bare `021000021` as phone numbers — an SSN, an EIN and
+   a routing number — so a user who asked for phone numbers would have three other
+   identifiers blacked out by a rule they never wrote. `PhoneNumberMatcher` enumerates the
+   forms instead. Where the detector is used, its span is trimmed
+   (`StreetAddressMatcher.endingAtPostcode`): on an unpunctuated form line it reads one word
+   past the postcode and calls the next field's label the city.
 2. **NER** — `NLTagScheme.nameType` for person/place/organization. Not built yet; works
    back to macOS 10.14 and returns spans directly.
 3. **On-device model** — `BlacklineIntelligence`, behind `--llm`. Catches what a pattern
@@ -278,24 +363,62 @@ everywhere and reusable by any future proposer.
 
 ### Implementation status
 
-**Built.** Rules parsing (§4). The matcher layer (§5.3): exact matches plus SSN, EIN,
-credit card, account, passport and driver's licence. `SourceText` normalization. Vision text
-recognition (`BlacklineOCR`), used to place redaction boxes and to read rendered pages back.
+**Built.** Rules parsing (§4). The matcher layer (§5.3): exact matches plus SSN, EIN and
+other tax IDs, credit card (with CVV and expiry), account (with SWIFT/BIC), passport,
+driver's licence, email address, phone number, postal address, date of birth, secrets
+(API keys, tokens, passwords, URL credentials, PEM blocks), IP address, health information
+(plan and record numbers, labelled diagnoses and ICD codes) and employee ID.
+`SourceText` normalization. Vision text recognition (`BlacklineOCR`), used to place redaction
+boxes and to read rendered pages back.
 Redaction with rasterization (§5.4), metadata scrubbing (§5.5) and the verification pass
 (§5.6), with the render-and-read-back loop on top. The on-device model tier. Two CLIs,
 `blackline-preview` and `blackline-redact`. The app: menu bar, background job queue with
-progress and cancellation, notifications, and the review window.
+progress and cancellation, notifications, and the review window. The Go loop described
+below, with `globalrules.md` and the per-document plan.
 
 **Not built.** Content-stream surgery, so redacted pages lose selectable text. OCR-based
 *detection*: recognition is used for placement and verification, but a page with no text
 layer is still copied through unexamined rather than read. Encrypted-PDF passwords. The
 Finder service, Share extension and App Intent. The rules editor and "add rules from this
-document". The Go loop described below.
+document".
 
-**Categories with no detector:** email addresses, phone numbers, street addresses, person
-names, dates of birth. In Deep runs the model covers these in practice;
-`MatcherFactory.unsupportedCategories` reports them so a run never implies it checked
-something it did not.
+**Categories with no detector:** person names. Names need tier 2's NER, and NLTagger was
+measured on the synthetic corpus before deciding not to ship it as a tier-1 detector: it
+missed a third of the names (Raghunathan, Sørensen, Yoshida, Tanaka) while reporting `HR`,
+`WA`, `PIP` and `Supplier` as people. That is neither a pattern nor a boundary anyone can
+state. Quoted rules are the answer (`samples/redact.example.txt` says so), and in Deep runs
+the model covers them; `MatcherFactory.unsupportedCategories` reports the category so a run
+never implies it checked something it did not.
+
+**A date of birth is a labelled date.** `DateOfBirthMatcher` matches a date beside `DOB` /
+`Date of birth` / `Born`, or under such a header in a pipe table, and no other date on the
+page — a form is full of dates and almost none of them identify anyone.
+
+**A column header is a label.** `AccountNumberMatcher`'s label window reaches one line up,
+which is one line short of a table header on every row but the first and stops dead at a
+markdown `|---|` separator; measured on the synthetic corpus, two bank accounts in a
+five-column table went unfound while the same numbers in running text were caught.
+`PipeTable` reads the columns where the text carries them (`|`-drawn tables only — a table
+extracted from a PDF page arrives as rows of words with no column structure, and gets
+nothing here, which is the honest answer) and `ColumnLabeledMatcher` lets a labelled
+matcher accept a whole cell under a header it would accept as a label.
+
+### The synthetic corpus
+
+`Tests/BlacklineKitTests/Fixtures/synthetic-proprietary-packet.md` is a fictional company's
+internal packet with one of everything, and `synthetic-proprietary-packet.redact.txt` is
+the rules file a user there would write: every category, plus quoted rules for the people
+and the code names. `SyntheticCorpusTests` holds the first pass to a single standard —
+**with that rules file, nothing proprietary survives it** — and to the opposite one: the
+money, the dates, the ticket numbers, the words beside a label all stay on the page. Every
+value in the fixture is inert (900-series SSNs, 555 exchanges, test PANs, `FAKE`-padded
+keys). When a detector is added or changed, run this suite before the unit suite: it is
+what found `license application` → *application* and `Palo Alto PA-3260` as an address.
+
+What the first pass cannot find, and the corpus does not pretend it can: the financial
+figures, the guidance, the formulation, the source code, the contract clauses. Nothing about
+their shape says what they are. Quoted rules cover the ones with a name; the rest is the
+model tier's, and on a return the model is told not to touch figures at all.
 
 ## The Go loop
 
@@ -327,6 +450,16 @@ Folding one into the other would put everything at the mercy of the model.
 `globalrules.md` is reached from **Fine tune…** in the menu bar; `<document>.md` from the
 run it belongs to.
 
+**`globalrules.md` has a size limit, and it is small.** The model's context window holds the
+instructions, the guidance, the page text *and* the reply — about 4,000 tokens for all four.
+A 24 KB policy document pasted into the file was measured at 5,508 tokens, and every page of
+every document then failed with `exceededContextWindowSize`: `ModelProposer` halves the
+*page* on that error, which cannot help when the guidance is what overflowed, so the run
+degraded to the detectors alone without saying so. `GlobalRules.promptBudget` (3,000
+characters) trims at a line boundary and `omittedCharacterCount` reports what was dropped,
+which the review window states as a gap. The file is for the operative rules — what to find,
+what to leave alone; a policy document belongs beside it, not in it.
+
 ### `<document>.md` holds personal information in the clear
 
 It lists the values found — the SSNs, the EINs, the names — and sits beside the source PDF,
@@ -354,6 +487,16 @@ source of what a Go removes — detectors and the model write the first draft, a
 the file decides. `AppModel.go(_:)` turns the ticked values into `ExactTextMatcher`s, which
 is what makes an untick stick: the detectors do not get a second say.
 
+Two floors stand under that, because a plan is a hand-editable file and a literal rule is a
+substring search. `DocumentPlan.minimumValueLength` refuses a ticked value shorter than
+three characters, or one with no letter or digit in it, and `refusedValues` reports them so
+the caller can say what it ignored. Then `PDFRedactor.maximumMatchesPerRulePerPage` refuses
+any rule that hits one page more than forty times — an EIN heads every page of a return and
+a shareholder's name can appear a dozen times on a K-1, but nothing that identifies anybody
+appears fifty times on one page. It is refused for that page and named in the result's
+problems, because blacking the page out and reporting success is worse, and so is going
+quiet.
+
 **Edit plan** and **Go** sit in the review window as well as the menu bar, beside the page
 being looked at, because the loop lives or dies on how cheap it is to change your mind. The
 ticked count is re-read on `didBecomeActive`, since the plan is edited in another program
@@ -370,6 +513,13 @@ talk the model into reporting money.
 Re-reading a document keeps the decisions already made: `DocumentPlan.merged(with:)` carries
 ticks across, keeps lines typed by hand, and brings anything new in ticked — so a document
 that has changed is still described accurately without discarding the user's judgement.
+
+**A plan item is one line, normalized.** A postal address matches across the line break the
+form printed it on, so the value arriving from a matcher carries a newline; written straight
+out it ends the markdown line halfway through and the plan loses both that value and the rest
+of the line. `DocumentPlan.Item` normalizes through `SourceText.normalize`, which is also
+what keeps the value usable — `ExactTextMatcher` normalizes its needle identically, so the
+folded value still finds the wrapped original.
 
 **Verifying a plan-driven run cannot be done by searching the file's bytes.** A redacted
 page is rasterized, so its text layer is gone whether a value was covered or left alone;

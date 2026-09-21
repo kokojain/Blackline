@@ -42,9 +42,28 @@ public struct MatcherFactory: Sendable {
                 matchers.append(
                     AccountNumberMatcher(includeUnlabeledDigitRuns: includeUnlabeledDigitRuns)
                 )
-            // Detectors for these need NSDataDetector and the NaturalLanguage framework
-            // (spec §5.3); they arrive with the PDF pipeline slice.
-            case .emailAddresses, .phoneNumbers, .streetAddresses, .personNames, .datesOfBirth:
+            case .emailAddresses:
+                matchers.append(EmailAddressMatcher())
+            case .phoneNumbers:
+                matchers.append(PhoneNumberMatcher())
+            case .streetAddresses:
+                matchers.append(StreetAddressMatcher())
+            case .datesOfBirth:
+                matchers.append(DateOfBirthMatcher())
+            case .secrets:
+                matchers.append(SecretMatcher())
+            case .ipAddresses:
+                matchers.append(IPAddressMatcher())
+            case .healthInformation:
+                matchers.append(HealthInformationMatcher())
+            case .employeeIdentifiers:
+                matchers.append(EmployeeIDMatcher())
+            // Person names need NER (spec §5.3), and measured on the synthetic corpus
+            // NLTagger misses a third of them while reporting `HR`, `WA` and `Supplier` as
+            // people — not a pattern, and not a boundary anyone can state. In a Deep run the
+            // model covers them; a run without one reports the category here rather than
+            // implying it looked.
+            case .personNames:
                 unsupported.append(category)
             }
         }
