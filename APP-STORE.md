@@ -18,13 +18,29 @@ short; the Blackline-specific work is in §2 and §3.
 Submission requires an archive built by Xcode from an app target. `make-app.sh`
 hand-assembles a bundle with ad-hoc signing — fine locally, unusable for submission.
 
-- [ ] Create an Xcode project with a macOS App target that depends on the local Swift
-      package. The app target links `BlacklineUI`; `BlacklineKit`, `BlacklineOCR`,
-      `BlacklineRedactor` and `BlacklineIntelligence` stay in the package. The two CLIs
-      remain package products and do not ship.
-- [ ] Move the `Info.plist` keys from the script into the target: `LSUIElement`,
-      `LSMinimumSystemVersion` 14.0, copyright string.
-- [ ] Signing: Automatic, App Store distribution profile.
+- [x] `App/Blackline.xcodeproj` — a macOS App target that references the repo as a local
+      Swift package (`XCLocalSwiftPackageReference` on `..`) and links the `BlacklineUI`
+      library product, which is now declared in `Package.swift` for that reason.
+      `BlacklineKit`, `BlacklineOCR`, `BlacklineRedactor` and `BlacklineIntelligence` stay
+      inside the package; the two CLIs remain package products and do not ship.
+
+      The app target **compiles `Sources/BlacklineApp/BlacklineApp.swift` where it sits**
+      rather than holding a copy of the entry point. Two `@main` files that must stay in
+      step is exactly the thing that silently drifts, and `swift run Blackline` /
+      `make-app.sh` still have to work for day-to-day development.
+- [x] The `Info.plist` keys moved out of the script into `App/Blackline/Info.plist`,
+      driven by build settings (`$(PRODUCT_BUNDLE_IDENTIFIER)`, `$(MARKETING_VERSION)`,
+      `$(MACOSX_DEPLOYMENT_TARGET)`) so the version and deployment target are set in one
+      place. `LSApplicationCategoryType` is `public.app-category.utilities` — the archive
+      warns without one, and it must match the category chosen in App Store Connect.
+- [ ] Signing: Automatic, App Store distribution profile. Blocked on §1 — there is no team
+      to sign with yet, so both configurations are `CODE_SIGN_STYLE = Manual` with
+      `CODE_SIGN_IDENTITY = "-"`, which is what lets the project build and archive today.
+      Enrolling means setting `DEVELOPMENT_TEAM` and flipping the style; nothing else.
+
+`xcodebuild -project App/Blackline.xcodeproj -scheme Blackline -configuration Release
+archive` succeeds as it stands. `make-app.sh` is untouched and stays the development path:
+it is faster, and it does not need an Apple account.
 
 ## 3. App Sandbox — mandatory, and it touches the core flow
 
@@ -77,7 +93,7 @@ and say so in the listing.
 
 ## 6. Before submitting
 
-- [ ] Bump `CFBundleShortVersionString` to `1.0`.
+- [ ] Bump `MARKETING_VERSION` to `1.0` in the Xcode target (the `Info.plist` reads it).
 - [ ] `swift test` green (334 tests at time of writing), then a real-document smoke test on
       a **sandboxed** build — sandboxing is where "worked in dev" fails.
 - [ ] Archive → Distribute → App Store Connect → Submit for Review. First review is
@@ -92,6 +108,7 @@ tax. Many privacy-focused Mac utilities do this. Both channels at once is also f
 
 ## Recommended order
 
-Do §1 and §2 now (mechanical). Then spend a day on §3 with a sandboxed build to learn
-whether the sibling-file write works via related items — that single question decides
-whether the App Store version keeps the one-click promise.
+§2 is done bar the signing line, which §1 unblocks. So: §1 now (mostly waiting), then
+spend a day on §3 with a sandboxed build to learn whether the sibling-file write works via
+related items — that single question decides whether the App Store version keeps the
+one-click promise, and the project it needs is now in the repo to try it in.

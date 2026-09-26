@@ -54,6 +54,8 @@ Sources/BlacklinePreview/  blackline-preview, a read-only CLI (this one does use
 Sources/BlacklineRedactCLI/ blackline-redact, writes the redacted copy
 Sources/BlacklineUI/       the app's views and job model (a library, so it can be rendered)
 Sources/BlacklineApp/      Blackline.app entry point: MenuBarExtra + review window
+App/Blackline.xcodeproj    the submission build: an app target linking BlacklineUI and
+                           compiling Sources/BlacklineApp in place (APP-STORE.md §2)
 Scripts/make-app.sh        assembles Blackline.app around the SwiftPM executable
 Tests/BlacklineKitTests/   swift-testing (`import Testing`)
 Tests/BlacklineKitTests/Fixtures/  synthetic-proprietary-packet.md — a fictional company packet seeded
@@ -71,11 +73,21 @@ swift run blackline-preview <file.pdf> [--rules <redact.txt>] [--mask] [--llm]
 swift run blackline-redact  <file.pdf> [--rules <redact.txt>] [--llm] [--scale N]
 
 ./Scripts/make-app.sh && open .build/Blackline.app   # the menu bar app
+
+# the submission build; needs no Apple account while signing is ad-hoc
+xcodebuild -project App/Blackline.xcodeproj -scheme Blackline -configuration Release archive
 ```
 
 SwiftPM cannot build an app bundle, and a menu bar app needs one — `LSUIElement` keeps it
 out of the Dock and UserNotifications will not register for a loose binary. `make-app.sh`
 wraps the executable and ad-hoc signs it.
+
+`App/Blackline.xcodeproj` exists because submission needs an Xcode archive, and that is the
+only thing it is for — `make-app.sh` stays the development path, being faster and needing no
+Apple account. The two cannot drift, because the app target compiles
+`Sources/BlacklineApp/BlacklineApp.swift` where it sits rather than keeping its own copy of
+the entry point; `Package.swift` exports `BlacklineUI` as a library product so the target has
+something to link.
 
 `blackline-preview` reports what *would* be redacted. It writes nothing — producing the copy
 is `blackline-redact`'s job. Its most important output is what it says it did **not** check:

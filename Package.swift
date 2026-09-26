@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "BlacklineKit", targets: ["BlacklineKit"]),
+        // The Xcode app target in App/ links this; SwiftPM builds the whole app itself.
+        .library(name: "BlacklineUI", targets: ["BlacklineUI"]),
         .executable(name: "blackline-preview", targets: ["BlacklinePreview"]),
         .executable(name: "blackline-redact", targets: ["BlacklineRedactCLI"]),
         .executable(name: "Blackline", targets: ["BlacklineApp"]),

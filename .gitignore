@@ -1,6 +1,7 @@
 .build/
 .swiftpm/
-*.xcodeproj
+# App/Blackline.xcodeproj is checked in — it is the submission build. Per-user state is not.
+xcuserdata/
 .DS_Store
 
 # Never commit real documents under test.
